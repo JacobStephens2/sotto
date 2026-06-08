@@ -11,6 +11,9 @@ jobs/
 __pycache__/
 *.pyc
 
+# Kokoro model weights — large, downloaded at setup (see kokoro/README.md).
+kokoro/models/
+
 # Real env file (commit .env.example instead)
 .env
 *.env

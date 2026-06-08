@@ -1,0 +1,36 @@
+# /etc/systemd/system/kokoro.service
+# Local Kokoro-82M TTS backend for lector. Install with:
+#   sudo cp deploy/kokoro.service /etc/systemd/system/kokoro.service
+#   sudo systemctl daemon-reload && sudo systemctl enable --now kokoro
+[Unit]
+Description=kokoro TTS (local Kokoro-82M, for lector) - stephens.page
+After=network.target
+
+[Service]
+Type=simple
+User=lector
+Group=lector
+WorkingDirectory=/var/www/lector.stephens.page/kokoro
+Environment=PYTHONUNBUFFERED=1
+Environment=PYTHONDONTWRITEBYTECODE=1
+# Bound the ONNX intra-op thread pool so it lines up with the CPU fence below.
+Environment=OMP_NUM_THREADS=2
+ExecStart=/var/www/lector.stephens.page/kokoro/.venv/bin/waitress-serve --listen 127.0.0.1:3477 --threads 4 --channel-timeout 180 server:app
+Restart=on-failure
+RestartSec=5
+
+# Resource fence: synthesis can't starve the other apps on this box.
+CPUQuota=200%
+MemoryMax=2G
+
+# Hardening (dedicated service user).
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectHome=true
+ProtectSystem=strict
+ReadWritePaths=/var/www/lector.stephens.page/kokoro
+ProtectKernelTunables=true
+ProtectControlGroups=true
+
+[Install]
+WantedBy=multi-user.target

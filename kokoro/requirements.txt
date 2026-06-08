@@ -1,0 +1,8 @@
+# Local Kokoro-82M TTS microservice for lector.
+kokoro-onnx        # Kokoro-82M inference on onnxruntime
+onnxruntime        # CPU inference engine
+misaki[en]         # grapheme-to-phoneme (uses system espeak-ng for fallback words)
+numpy
+lameenc            # in-process MP3 encoder (libmp3lame; no ffmpeg subprocess)
+Flask>=3.1
+waitress           # production WSGI server
