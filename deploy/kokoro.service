@@ -14,13 +14,16 @@ WorkingDirectory=/var/www/lector.stephens.page/kokoro
 Environment=PYTHONUNBUFFERED=1
 Environment=PYTHONDONTWRITEBYTECODE=1
 # Bound the ONNX intra-op thread pool so it lines up with the CPU fence below.
-Environment=OMP_NUM_THREADS=2
-ExecStart=/var/www/lector.stephens.page/kokoro/.venv/bin/waitress-serve --listen 127.0.0.1:3477 --threads 4 --channel-timeout 180 server:app
+# Kokoro-82M runs ~1.4x realtime at 3-4 CPU threads on this box.
+Environment=OMP_NUM_THREADS=3
+ExecStart=/var/www/lector.stephens.page/kokoro/.venv/bin/waitress-serve --listen 127.0.0.1:3477 --threads 4 --channel-timeout 1800 server:app
 Restart=on-failure
 RestartSec=5
 
-# Resource fence: synthesis can't starve the other apps on this box.
-CPUQuota=200%
+# Resource fence: leave one core free and run at low priority so a long
+# synthesis can't starve the other apps on this box.
+CPUQuota=300%
+Nice=10
 MemoryMax=2G
 
 # Hardening (dedicated service user).
