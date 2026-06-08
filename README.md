@@ -18,6 +18,10 @@ how to wrap an AI automation so a person stays in command of it.
 Jobs run in the background (a 10k-word document takes a few minutes), so the
 request never blocks on a long synthesis.
 
+Saving a result to your Library keeps the source markdown beside the audio (a
+`.md` sidecar under the same basename), so every saved narration stays traceable
+to exactly what was read - readable inline or downloadable from the Library page.
+
 ## The boundaries it keeps (and why they are the point)
 
 This is a TTS toy, but it is built the way a revenue-critical AI automation

@@ -280,6 +280,7 @@ audio{width:100%;margin:.6rem 0 .2rem}
 .voicegrid{display:flex;flex-wrap:wrap;gap:.7rem;margin:.3rem 0}
 .vc{display:flex;flex-direction:column;gap:.2rem;font-size:.8rem;color:#555}.vc audio{width:12.5rem;height:2.2rem;margin:0}
 table.u{border-collapse:collapse;width:100%}table.u td,table.u th{border-bottom:1px solid #e3e3e3;text-align:left;padding:.4rem .3rem;font-size:.95rem}
+pre.src{white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;background:#f0f0f0;padding:.7rem;border-radius:6px;overflow:auto;max-height:24rem;margin:.5rem 0 0}
 </style></head><body>
 <nav>{% if user %}<a class=brand href="/">lector</a><span class=sp></span>
 <span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
@@ -333,7 +334,9 @@ LIB = """<h1><a href="/">lector</a></h1>
 <b>{{it.title}}</b> <span class=muted>&middot; {{it.size}}</span><br>
 <audio id="lb{{loop.index}}" controls preload=none src="/library/{{it.name}}"></audio>
 <div class=skiprow><button type=button onclick="lskip('lb{{loop.index}}',-15)">&laquo; 15s</button><button type=button onclick="lskip('lb{{loop.index}}',15)">15s &raquo;</button></div>
-<a href="/library/{{it.name}}" download>Download</a>
+<a href="/library/{{it.name}}" download>Download audio</a>{% if it.text is not none %} &middot; <a href="/library/{{it.text_name}}" download>Download text</a>
+<details style="margin-top:.5rem"><summary class=muted style="cursor:pointer">Source text</summary>
+<pre class=src>{{it.text}}</pre></details>{% endif %}
 </div>
 {% endfor %}{% else %}<p class=muted>Nothing saved yet. Convert a document, then press "Save to Library" on the result.</p>{% endif %}
 <p><a href="/">Back</a></p>"""
@@ -585,7 +588,7 @@ def convert():
     job_id = uuid.uuid4().hex
     owner = current_user()
     JOBS[job_id] = {"status": "queued", "title": title, "owner": owner,
-                    "created": time.time(), "done": 0, "total": None}
+                    "created": time.time(), "done": 0, "total": None, "md": md}
     log(owner, title, "queued", f"{len(md.split())}w voice={voice}")
     threading.Thread(target=run_job, args=(job_id, md, voice, title, owner), daemon=True).start()
     return redirect(url_for("job_page", job_id=job_id))
@@ -631,6 +634,12 @@ def job_save(job_id):
         if os.path.exists(os.path.join(lib, name)):
             name = f"{slug}-{job_id[:6]}.mp3"
         shutil.copy2(job["file"], os.path.join(lib, name))
+        # Keep the source text beside the audio under the same basename, so a
+        # saved narration stays traceable to exactly what was read.
+        src = job.get("md", "")
+        if src:
+            with open(os.path.join(lib, name[:-4] + ".md"), "w", encoding="utf-8") as f:
+                f.write(src)
         job["saved"] = name
         log(current_user(), job["title"], "saved", name)
     return redirect(url_for("library"))
@@ -644,18 +653,27 @@ def library():
         if n.endswith(".mp3"):
             mb = os.path.getsize(os.path.join(lib, n)) / 1048576
             title = re.sub(r"[-_]+", " ", n[:-4]).strip().capitalize()
-            items.append({"name": n, "title": title, "size": f"{mb:.1f} MB"})
+            text = None
+            tp = os.path.join(lib, n[:-4] + ".md")
+            if os.path.isfile(tp):
+                try:
+                    text = open(tp, encoding="utf-8", errors="replace").read()
+                except Exception:
+                    text = None
+            items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
+                          "text": text, "text_name": (n[:-4] + ".md") if text is not None else None})
     return render(LIB, "lector - library", items=items)
 
 
 @app.route("/library/<name>")
 def library_file(name):
-    if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp3", name):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.(mp3|md)", name):
         abort(404)
     path = os.path.join(user_lib(current_user()), name)
     if not os.path.isfile(path):
         abort(404)
-    return send_file(path, mimetype="audio/mpeg", conditional=not app.config["USE_X_SENDFILE"])
+    mime = "audio/mpeg" if name.endswith(".mp3") else "text/markdown; charset=utf-8"
+    return send_file(path, mimetype=mime, conditional=not app.config["USE_X_SENDFILE"])
 
 
 @app.route("/sample/<voice>")
