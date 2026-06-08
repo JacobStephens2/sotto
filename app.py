@@ -42,6 +42,7 @@ else:
     VOICES, DEFAULT_VOICE, MODEL = OPENAI_VOICES, "onyx", OPENAI_MODEL
 USERNAME_RE = re.compile(r"^[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}$")
 TOKENS_PATH = os.path.join(STATE_DIR, "tokens.json")
+SHARES_PATH = os.path.join(STATE_DIR, "shares.json")
 BASE_URL = os.environ.get("LECTOR_BASE_URL", "https://lector.stephens.page")
 SMTP_HOST = os.environ.get("SMTP_HOST")
 SMTP_PORT = int(os.environ.get("SMTP_PORT", "587"))
@@ -64,6 +65,7 @@ app.secret_key = open(SECRET_PATH).read().strip()
 JOBS = {}
 LOG_LOCK = threading.Lock()
 USER_LOCK = threading.Lock()
+SHARE_LOCK = threading.Lock()
 
 
 # ----------------------------------------------------------------------- accounts
@@ -305,13 +307,16 @@ audio{width:100%;margin:.6rem 0 .2rem}
 .vc{display:flex;flex-direction:column;gap:.2rem;font-size:.8rem;color:#555}.vc audio{width:12.5rem;height:2.2rem;margin:0}
 table.u{border-collapse:collapse;width:100%}table.u td,table.u th{border-bottom:1px solid #e3e3e3;text-align:left;padding:.4rem .3rem;font-size:.95rem}
 pre.src{white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;background:#f0f0f0;padding:.7rem;border-radius:6px;overflow:auto;max-height:24rem;margin:.5rem 0 0}
+.shareurl{width:100%;box-sizing:border-box;font:12px ui-monospace,Menlo,monospace;padding:.4rem;margin:.3rem 0 0;color:#333;background:#f4f6f8}
+.linkbtn{background:none;color:#064b87;border:0;padding:0;margin:0;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;text-decoration:underline}
 </style></head><body>
-<nav>{% if user %}<a class=brand href="/">lector</a><span class=sp></span>
+<nav>{% if user %}<a class=brand href="/">lector</a><a href="/library">library</a><span class=sp></span>
 <span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
 {% else %}<span class=brand>lector</span>{% endif %}</nav>
 {{body|safe}}
-<footer>lector reads documents aloud and nothing else - it never sends, publishes, or
-posts anything. {% if provider=='kokoro' %}Audio is synthesized on this server by Kokoro-82M
+<footer>lector reads documents aloud - it never emails, posts, or acts on your behalf; the only
+thing it makes public is a share link you create yourself, which you can revoke.
+{% if provider=='kokoro' %}Audio is synthesized on this server by Kokoro-82M
 (ONNX), an openly licensed model trained on documented public-domain and permissively licensed
 audio; the voices are synthetic and no audio leaves the server.{% else %}Audio is synthesized by
 OpenAI ({{model}}); the voices are synthetic and the model's training provenance is not disclosed
@@ -364,9 +369,27 @@ LIB = """<h1><a href="/">lector</a></h1>
 <a href="/library/{{it.name}}" download>Download audio</a>{% if it.text is not none %} &middot; <a href="/library/{{it.text_name}}" download>Download text</a>
 <details style="margin-top:.5rem"><summary class=muted style="cursor:pointer">Source text</summary>
 <pre class=src>{{it.text}}</pre></details>{% endif %}
+{% if it.share_url %}
+<div class=muted style="margin-top:.5rem">Shared{% if it.share_text %} with source text{% endif %} &middot; <form method=post action="/library/{{it.name}}/unshare" style="display:inline;margin:0"><input type=hidden name=_csrf value="{{csrf}}"><button class=linkbtn type=submit>stop sharing</button></form></div>
+<input class=shareurl readonly onclick="this.select()" value="{{it.share_url}}">
+{% else %}
+<form method=post action="/library/{{it.name}}/share" style="margin-top:.5rem">
+<input type=hidden name=_csrf value="{{csrf}}">
+{% if it.text is not none %}<label style="font-weight:400;display:inline;margin:0"><input type=checkbox name=text value=1 checked style="width:auto"> include source text</label> &middot; {% endif %}<button class=linkbtn type=submit>create share link</button>
+</form>
+{% endif %}
 </div>
 {% endfor %}{% else %}<p class=muted>Nothing saved yet. Convert a document, then press "Save to Library" on the result.</p>{% endif %}
 <p><a href="/">Back</a></p>"""
+
+SHARE_VIEW = """<h1>{{heading}}</h1>
+<p class=sub>Shared with you via lector &middot; narrated audio</p>
+<audio id=sh controls preload=metadata src="/share/{{token}}/audio"></audio>
+<div class=skiprow><button type=button onclick="lskip('sh',-15)">&laquo; 15s</button><button type=button onclick="lskip('sh',15)">15s &raquo;</button></div>
+<p><a href="/share/{{token}}/audio" download>Download audio</a>{% if has_text %} &middot; <a href="/share/{{token}}/text" download>Download text</a>{% endif %}</p>
+{% if has_text %}<details><summary class=muted style="cursor:pointer">Source text</summary>
+<pre class=src>{{text}}</pre></details>{% endif %}
+<p class=muted style="margin-top:1.4rem">Anyone with this link can listen. It was shared deliberately by its owner, who can revoke it.</p>"""
 
 LOGIN = """<h1>lector</h1><p class=sub>Reads your documents aloud. Please sign in.</p>
 {% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
@@ -431,7 +454,8 @@ def render(body_tpl, title, **ctx):
 
 
 # --------------------------------------------------------------------------- gate
-PUBLIC = {"login", "healthz", "static", "forgot", "reset"}
+PUBLIC = {"login", "healthz", "static", "forgot", "reset",
+          "share", "share_audio", "share_text"}
 
 
 @app.before_request
@@ -673,9 +697,33 @@ def job_save(job_id):
     return redirect(url_for("library"))
 
 
+def _load_shares():
+    try:
+        return json.load(open(SHARES_PATH))
+    except Exception:
+        return {}
+
+
+def _save_shares(shares):
+    tmp = SHARES_PATH + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(shares, f, indent=2)
+    os.replace(tmp, SHARES_PATH)
+
+
+def _user_shares(owner):
+    """Map an owner's shared filenames to their share token + text flag."""
+    out = {}
+    for tok, s in _load_shares().items():
+        if s.get("owner") == owner:
+            out[s.get("name")] = {"token": tok, "text": bool(s.get("text"))}
+    return out
+
+
 @app.route("/library")
 def library():
     lib = user_lib(current_user())
+    shares = _user_shares(current_user())
     items = []
     for n in sorted(os.listdir(lib)):
         if n.endswith(".mp3"):
@@ -688,8 +736,11 @@ def library():
                     text = open(tp, encoding="utf-8", errors="replace").read()
                 except Exception:
                     text = None
+            sh = shares.get(n)
             items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
-                          "text": text, "text_name": (n[:-4] + ".md") if text is not None else None})
+                          "text": text, "text_name": (n[:-4] + ".md") if text is not None else None,
+                          "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
+                          "share_text": sh["text"] if sh else False})
     return render(LIB, "lector - library", items=items)
 
 
@@ -702,6 +753,96 @@ def library_file(name):
         abort(404)
     mime = "audio/mpeg" if name.endswith(".mp3") else "text/markdown; charset=utf-8"
     return send_file(path, mimetype=mime, conditional=not app.config["USE_X_SENDFILE"])
+
+
+# ------------------------------------------------------------------ share links
+# A share link is a capability: an unguessable token grants read-only access to
+# one saved item (audio, and optionally its source text). It is created and
+# revoked only by the owner, and every create/revoke writes an audit line.
+@app.route("/library/<name>/share", methods=["POST"])
+def library_share(name):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp3", name):
+        abort(404)
+    lib = user_lib(current_user())
+    if not os.path.isfile(os.path.join(lib, name)):
+        abort(404)
+    want_text = bool(request.form.get("text")) and os.path.isfile(os.path.join(lib, name[:-4] + ".md"))
+    with SHARE_LOCK:
+        shares = _load_shares()
+        tok = next((t for t, s in shares.items()
+                    if s.get("owner") == current_user() and s.get("name") == name), None)
+        if not tok:
+            tok = secrets.token_urlsafe(24)
+        shares[tok] = {"owner": current_user(), "name": name, "text": want_text,
+                       "created": datetime.datetime.now().isoformat(timespec="seconds")}
+        _save_shares(shares)
+    log(current_user(), name, "share-create", "with-text" if want_text else "audio-only")
+    return redirect(url_for("library"))
+
+
+@app.route("/library/<name>/unshare", methods=["POST"])
+def library_unshare(name):
+    with SHARE_LOCK:
+        shares = _load_shares()
+        gone = [t for t, s in shares.items()
+                if s.get("owner") == current_user() and s.get("name") == name]
+        for t in gone:
+            shares.pop(t, None)
+        if gone:
+            _save_shares(shares)
+    if gone:
+        log(current_user(), name, "share-revoke", "")
+    return redirect(url_for("library"))
+
+
+def _shared(token):
+    """Return a valid share record for a token, or None."""
+    s = _load_shares().get(token)
+    if not s or not re.fullmatch(r"[A-Za-z0-9._-]+\.mp3", s.get("name", "")):
+        return None
+    if not os.path.isfile(os.path.join(user_lib(s["owner"]), s["name"])):
+        return None
+    return s
+
+
+@app.route("/share/<token>")
+def share(token):
+    s = _shared(token)
+    if not s:
+        abort(404)
+    name = s["name"]
+    title = re.sub(r"[-_]+", " ", name[:-4]).strip().capitalize()
+    text = None
+    if s.get("text"):
+        tp = os.path.join(user_lib(s["owner"]), name[:-4] + ".md")
+        if os.path.isfile(tp):
+            try:
+                text = open(tp, encoding="utf-8", errors="replace").read()
+            except Exception:
+                text = None
+    return render(SHARE_VIEW, "lector - " + title[:40], token=token, heading=title,
+                  text=text, has_text=text is not None)
+
+
+@app.route("/share/<token>/audio")
+def share_audio(token):
+    s = _shared(token)
+    if not s:
+        abort(404)
+    return send_file(os.path.join(user_lib(s["owner"]), s["name"]), mimetype="audio/mpeg",
+                     conditional=not app.config["USE_X_SENDFILE"])
+
+
+@app.route("/share/<token>/text")
+def share_text(token):
+    s = _shared(token)
+    if not s or not s.get("text"):
+        abort(404)
+    path = os.path.join(user_lib(s["owner"]), s["name"][:-4] + ".md")
+    if not os.path.isfile(path):
+        abort(404)
+    return send_file(path, mimetype="text/markdown; charset=utf-8",
+                     conditional=not app.config["USE_X_SENDFILE"])
 
 
 @app.route("/sample/<voice>")
@@ -741,8 +882,9 @@ salted hashes, and sessions are signed, HTTPS-only cookies.</li>
 on this server, so no credential and no audio ever leave it.</li>
 <li><b>Bounded scope.</b> The only outbound call is to a text-to-speech model running on this
 same machine; input is size-capped; there is no shell and no arbitrary network access.</li>
-<li><b>Not delegated.</b> lector produces audio and stops. It does not email, publish,
-post, or act on your behalf.</li>
+<li><b>Not delegated.</b> lector produces audio and stops. It never acts on its own - it does
+not email, post, or publish anything unless you deliberately create a share link, which you
+control and can revoke at any time.</li>
 <li><b>Traceability.</b> Every job and account action writes one audit line.</li>
 <li><b>Provenance honesty.</b> The voice is synthetic, produced by Kokoro-82M - an openly
 licensed (Apache-2.0) model trained on documented public-domain and permissively licensed audio.
@@ -752,8 +894,9 @@ lector can name what reads to you rather than passing the audio off as neutral.<
 environment - never in a page, never in the source repository, never sent to your browser.</li>
 <li><b>Bounded scope.</b> The only outbound call is to the text-to-speech API; input is
 size-capped; there is no shell and no arbitrary network access.</li>
-<li><b>Not delegated.</b> lector produces audio and stops. It does not email, publish,
-post, or act on your behalf.</li>
+<li><b>Not delegated.</b> lector produces audio and stops. It never acts on its own - it does
+not email, post, or publish anything unless you deliberately create a share link, which you
+control and can revoke at any time.</li>
 <li><b>Traceability.</b> Every job and account action writes one audit line.</li>
 <li><b>Provenance honesty.</b> The voice is synthetic and the model vendor does not disclose
 its training data or the labor behind it; lector says so rather than passing the audio off as neutral.</li>
