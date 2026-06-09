@@ -321,8 +321,17 @@ def log(who, title, status, detail):
 
 
 # ------------------------------------------------------------------------ templates
+# Inline SVG favicon: a speaker + sound waves on the brand navy - "documents read aloud".
+FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
+           '<rect width="32" height="32" rx="7" fill="#002A4F"/>'
+           '<path d="M8 13h4l5-5v16l-5-5H8z" fill="#fff"/>'
+           '<path d="M20 12a5 5 0 0 1 0 8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'
+           '<path d="M22.5 9a9 9 0 0 1 0 14" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'
+           '</svg>')
+
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{{title}}</title>
+<link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
 :root{color-scheme:light dark}
 body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:#1a1a1a;background:#fafafa}
@@ -500,7 +509,7 @@ def render(body_tpl, title, **ctx):
 
 # --------------------------------------------------------------------------- gate
 PUBLIC = {"login", "healthz", "static", "forgot", "reset",
-          "share", "share_audio", "share_text"}
+          "share", "share_audio", "share_text", "favicon"}
 
 
 @app.before_request
@@ -906,6 +915,13 @@ def sample(voice):
 @app.route("/about")
 def about():
     return render(ABOUT, "lector - about")
+
+
+@app.route("/favicon.svg")
+@app.route("/favicon.ico")
+def favicon():
+    return Response(FAVICON, mimetype="image/svg+xml",
+                    headers={"Cache-Control": "public, max-age=86400"})
 
 
 @app.route("/healthz")
