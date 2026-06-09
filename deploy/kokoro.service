@@ -21,10 +21,13 @@ Restart=on-failure
 RestartSec=5
 
 # Resource fence: leave one core free and run at low priority so a long
-# synthesis can't starve the other apps on this box.
+# synthesis can't starve the other apps on this box. MemoryMax is generous
+# because onnxruntime's CPU arena grows over a long multi-chunk job; 2G was
+# OOM-killed on large chunks. lector also caps Kokoro chunk size to bound this.
 CPUQuota=300%
 Nice=10
-MemoryMax=2G
+MemoryMax=5G
+MemoryHigh=4G
 
 # Hardening (dedicated service user).
 NoNewPrivileges=true

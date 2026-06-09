@@ -24,7 +24,8 @@ LOG_PATH = os.path.join(APP_DIR, "lector.log")
 for d in (JOBS_DIR, LIBRARY_DIR, STATE_DIR):
     os.makedirs(d, exist_ok=True)
 
-CHUNK_LIMIT = 3600
+CHUNK_LIMIT = 3600          # OpenAI input ceiling per request
+KOKORO_CHUNK_LIMIT = 1000   # smaller for the local model: bounds per-request memory and latency
 MAX_INPUT = 400 * 1024
 INSTRUCTIONS = ("Read as a calm, measured, articulate audiobook narrator. "
                 "Natural pacing, clear diction, a short pause at each section heading.")
@@ -228,13 +229,13 @@ def chunk(text, limit=CHUNK_LIMIT):
     return chunks
 
 
-def _post(url, body, headers, label):
+def _post(url, body, headers, label, timeout=180):
     """POST and return the response bytes, retrying a few times with backoff."""
     req = urllib.request.Request(url, data=body, headers=headers)
     last = None
     for attempt in range(4):
         try:
-            with urllib.request.urlopen(req, timeout=180) as r:
+            with urllib.request.urlopen(req, timeout=timeout) as r:
                 return r.read()
         except Exception as e:
             last = e
@@ -252,7 +253,7 @@ def tts_openai(text, voice):
 
 def tts_kokoro(text, voice):
     body = json.dumps({"text": text, "voice": voice}).encode()
-    return _post(KOKORO_URL, body, {"Content-Type": "application/json"}, "Kokoro TTS")
+    return _post(KOKORO_URL, body, {"Content-Type": "application/json"}, "Kokoro TTS", timeout=300)
 
 
 def backend_of_voice(voice):
@@ -325,7 +326,8 @@ def run_job(job_id, md, voice, title, owner):
         if backend_of_voice(voice) == "openai" and not may_use_openai(owner):
             voice = KOKORO_DEFAULT  # safety: never bill OpenAI for an unauthorized account
         text = clean_markdown(md)
-        chunks = chunk(text)
+        limit = KOKORO_CHUNK_LIMIT if backend_of_voice(voice) == "kokoro" else CHUNK_LIMIT
+        chunks = chunk(text, limit)
         job.update(status="running", total=len(chunks), done=0, words=len(text.split()))
         out_path = os.path.join(JOBS_DIR, job_id + ".mp3")
         cancelled = False
