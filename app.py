@@ -398,6 +398,33 @@ def lib_title(lib_dir, name):
     return re.sub(r"[-_]+", " ", name[:-4]).strip().capitalize()
 
 
+def mp3_duration(path):
+    """Approximate MP3 length in seconds from the first frame's bitrate (the
+    output is CBR from both backends, so size/bitrate is accurate)."""
+    try:
+        size = os.path.getsize(path)
+        with open(path, "rb") as f:
+            head = f.read(10)
+            off = 0
+            if head[:3] == b"ID3":
+                off = 10 + (((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14)
+                            | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f))
+            f.seek(off)
+            hdr = f.read(4)
+        if len(hdr) < 4 or hdr[0] != 0xFF or (hdr[1] & 0xE0) != 0xE0:
+            return None
+        mpeg1 = ((hdr[1] >> 3) & 0x3) == 3
+        br_i = (hdr[2] >> 4) & 0xF
+        if br_i in (0, 0xF):
+            return None
+        table = ([0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320] if mpeg1
+                 else [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160])
+        kbps = table[br_i]
+        return int((size - off) * 8 / (kbps * 1000)) if kbps else None
+    except Exception:
+        return None
+
+
 def run_job(job_id, md, voice, title, owner, resume=False):
     # Runs in a detached daemon thread, so it continues after the user leaves the
     # job page. Progress is fsync'd and mirrored to disk after every chunk, so an
@@ -613,7 +640,7 @@ LIB = """<h1><a href="/">lector</a></h1>
 {% endif %}
 {% if items %}{% for it in items %}
 <div id="{{it.name}}" style="margin:1.3rem 0;scroll-margin-top:1rem">
-<b>{{it.title}}</b> <span class=muted>&middot; {{it.size}}</span><br>
+<b>{{it.title}}</b> <span class=muted>{% if it.length %}&middot; {{it.length}} {% endif %}&middot; {{it.size}}</span><br>
 <audio id="lb{{loop.index}}" controls preload=none src="/library/{{it.name}}"></audio>
 <div class=skiprow><button type=button onclick="lskip('lb{{loop.index}}',-15)">&laquo; 15s</button><button type=button onclick="lskip('lb{{loop.index}}',15)">15s &raquo;</button></div>
 <a href="/library/{{it.name}}" download>Download audio</a>{% if it.text is not none %} &middot; <a href="/library/{{it.text_name}}" download>Download text</a>
@@ -1017,6 +1044,7 @@ def library():
     for n in sorted(os.listdir(lib)):
         if n.endswith(".mp3"):
             mb = os.path.getsize(os.path.join(lib, n)) / 1048576
+            dur = mp3_duration(os.path.join(lib, n))
             title = lib_title(lib, n)
             text = None
             tp = os.path.join(lib, n[:-4] + ".md")
@@ -1027,6 +1055,7 @@ def library():
                     text = None
             sh = shares.get(n)
             items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
+                          "length": fmt_duration(dur) if dur else None,
                           "text": text, "text_name": (n[:-4] + ".md") if text is not None else None,
                           "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
                           "share_text": sh["text"] if sh else False})
