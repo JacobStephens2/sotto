@@ -628,6 +628,12 @@ LIB = """<h1><a href="/">lector</a></h1>
 {% if it.text is not none %}<label style="font-weight:400;display:inline;margin:0"><input type=checkbox name=text value=1 checked style="width:auto"> include source text</label> &middot; {% endif %}<button class=linkbtn type=submit>create share link</button>
 </form>
 {% endif %}
+<details style="margin-top:.4rem"><summary class=muted style="cursor:pointer">Rename</summary>
+<form method=post action="/library/{{it.name}}/rename" style="margin-top:.4rem">
+<input type=hidden name=_csrf value="{{csrf}}">
+<input name=title type=text maxlength=120 value="{{it.title}}" style="width:65%;box-sizing:border-box">
+<button class=linkbtn type=submit style="margin-left:.5rem">Save</button>
+</form></details>
 </div>
 {% endfor %}{% elif not active %}<p class=muted>Nothing saved yet. Convert a document, then press "Save to Library" on the result.</p>{% endif %}
 <p><a href="/">Back</a></p>
@@ -1047,6 +1053,27 @@ def library_file(name):
         abort(404)
     mime = "audio/mpeg" if name.endswith(".mp3") else "text/markdown; charset=utf-8"
     return send_file(path, mimetype=mime, conditional=not app.config["USE_X_SENDFILE"])
+
+
+@app.route("/library/<name>/rename", methods=["POST"])
+def library_rename(name):
+    if not re.fullmatch(r"[A-Za-z0-9._-]+\.mp3", name):
+        abort(404)
+    lib = user_lib(current_user())
+    if not os.path.isfile(os.path.join(lib, name)):
+        abort(404)
+    new = (request.form.get("title") or "").strip()[:120]
+    tp = os.path.join(lib, name[:-4] + ".title")  # only the display title changes; file/URL stay put
+    if new:
+        with open(tp, "w", encoding="utf-8") as f:
+            f.write(new)
+    else:
+        try:
+            os.remove(tp)   # blank -> revert to the filename-derived name
+        except OSError:
+            pass
+    log(current_user(), new or name, "rename", name)
+    return redirect(url_for("library") + "#" + name)
 
 
 # ------------------------------------------------------------------ share links
