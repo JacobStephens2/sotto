@@ -52,5 +52,6 @@ Kokoro-82M is ~330 MB of weights. On this 4-core box it synthesizes at roughly
 **1.4x realtime** (CPU only), so a short document is ready in well under a minute,
 but an audiobook-length document (~1 hour of audio) takes ~40 min. lector runs
 synthesis as a background job, so the request never blocks on it. The systemd unit
-fences the service at `CPUQuota=300%` / `Nice=10` / `MemoryMax=2G`, leaving a core
+fences the service at `CPUQuota=300%` / `Nice=10` / `MemoryMax=5G` (2G was OOM-killed
+on long multi-chunk jobs), leaving a core
 free for the other apps on the box.

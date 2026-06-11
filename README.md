@@ -69,6 +69,23 @@ Apache terminates TLS and reverse-proxies `lector.stephens.page` to
 `127.0.0.1:3476`; authentication is the app's own session login, not anything at
 the proxy. systemd (`lector.service`) keeps it running.
 
+### Or with Docker Compose
+
+Two containers - the app and the local Kokoro-82M TTS backend - wired together,
+mirroring the systemd deployment:
+
+```
+docker compose up -d
+# first start downloads the model weights (~360 MB), then:
+open http://localhost:3476
+```
+
+The app binds loopback by default (`LECTOR_BIND=0.0.0.0` to expose), audio is
+synthesized locally in the `kokoro` container (no third-party TTS, no API key),
+and accounts/audio/state live in named volumes. Optional extras (hosted-TTS
+fallback, SMTP for emailed links) come from a `.env` copied from
+`.env.example` - loaded only if present.
+
 ## Swapping the API key
 
 The key is the one line in `/etc/lector/lector.env`. Replace the value and

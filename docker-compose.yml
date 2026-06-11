@@ -1,0 +1,57 @@
+# lector + its local Kokoro-82M TTS backend, self-hosted in two containers.
+#
+#   docker compose up -d
+#   open http://localhost:3476
+#
+# First start downloads the model weights (~360 MB) into the kokoro-models
+# volume; the TTS container reports healthy once they are loaded. No third-party
+# TTS API is involved: audio is synthesized locally, exactly like the systemd
+# deployment this mirrors (deploy/*.service).
+#
+# Optional env (hosted-TTS fallback, emailed links, SMTP): copy .env.example to
+# .env and fill in values - compose passes them through.
+
+services:
+  lector:
+    build: .
+    restart: unless-stopped
+    ports:
+      # Loopback by default, same posture as the systemd unit; front it with
+      # your TLS proxy. Set LECTOR_BIND=0.0.0.0 to expose on all interfaces.
+      - "${LECTOR_BIND:-127.0.0.1}:${LECTOR_PORT:-3476}:3476"
+    environment:
+      LECTOR_TTS_BACKEND: kokoro
+      KOKORO_URL: http://kokoro:3477/tts
+      LECTOR_RESUME: "1"
+      LECTOR_BASE_URL: ${LECTOR_BASE_URL:-http://localhost:3476}
+    # Optional hosted-TTS fallback + SMTP: copy .env.example to .env and fill it
+    # in. Loaded only if present - unset is different from empty here (the app
+    # int()s SMTP_PORT, and an empty OPENAI_API_KEY would read as configured).
+    env_file:
+      - path: .env
+        required: false
+    volumes:
+      - lector-library:/app/library
+      - lector-state:/app/state
+      - lector-jobs:/app/jobs
+    depends_on:
+      kokoro:
+        condition: service_healthy
+
+  kokoro:
+    build: ./kokoro
+    restart: unless-stopped
+    # No published ports: only lector reaches it, on the compose network.
+    environment:
+      # Mirror the systemd unit's resource fence (kokoro.service).
+      OMP_NUM_THREADS: "3"
+    cpus: 3.0
+    mem_limit: 5g
+    volumes:
+      - kokoro-models:/app/models
+
+volumes:
+  lector-library:
+  lector-state:
+  lector-jobs:
+  kokoro-models:
