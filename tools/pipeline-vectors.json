@@ -1,0 +1,205 @@
+{
+ "_meta": {
+  "reference": "sotto server app.py clean_markdown()+chunk()",
+  "kokoro_chunk_limit": 1000,
+  "note": "regenerate only via tools/generate_pipeline_vectors.py in the server repo"
+ },
+ "cases": [
+  {
+   "name": "acronyms",
+   "input": "Write 3 ADRs; one ADR per choice. 5 hr/wk on K8s and IaC; review JDs, one JD, PR #148.",
+   "cleaned": "Write 3 architecture decision records; one architecture decision record per choice. 5 hours per week on Kubernetes and infrastructure as code; review job descriptions, one job description, pull request 148.",
+   "chunks": [
+    "Write 3 architecture decision records; one architecture decision record per choice. 5 hours per week on Kubernetes and infrastructure as code; review job descriptions, one job description, pull request 148."
+   ]
+  },
+  {
+   "name": "arrows-and-compare",
+   "input": "a → b ↔ c, x ≤ 5, y ≥ 2, 3×4, 50%",
+   "cleaned": "a to b and c, x at most 5, y at least 2, 3 times 4, 50 percent.",
+   "chunks": [
+    "a to b and c, x at most 5, y at least 2, 3 times 4, 50 percent."
+   ]
+  },
+  {
+   "name": "blockquote-and-bullets",
+   "input": "> A quoted line\n> another\n\n- first bullet\n* star bullet\n  - indented dash",
+   "cleaned": "A quoted line.\nanother.\n\nfirst bullet.\nstar bullet.\nindented dash.",
+   "chunks": [
+    "A quoted line.\nanother.\n\nfirst bullet.\nstar bullet.\nindented dash."
+   ]
+  },
+  {
+   "name": "circled-digits",
+   "input": "Items ① and ② and ⑨ are enumerated.",
+   "cleaned": "Items item 1 and item 2 and item 9 are enumerated.",
+   "chunks": [
+    "Items item 1 and item 2 and item 9 are enumerated."
+   ]
+  },
+  {
+   "name": "code-fence-and-rule",
+   "input": "Before\n```\ncode line stays? fence line goes\n```\n---\nAfter",
+   "cleaned": "Before.\n\ncode line stays? fence line goes.\n\nAfter.",
+   "chunks": [
+    "Before.\n\ncode line stays? fence line goes.\n\nAfter."
+   ]
+  },
+  {
+   "name": "dashes-and-ranges",
+   "input": "pages 3-7, then 1990–1995, em—dash, mid-word-hyphens stay",
+   "cleaned": "pages 3 to 7, then 1990 to 1995, em, dash, mid-word-hyphens stay.",
+   "chunks": [
+    "pages 3 to 7, then 1990 to 1995, em, dash, mid-word-hyphens stay."
+   ]
+  },
+  {
+   "name": "emphasis-soup",
+   "input": "This **bold** and __also bold__ and *ital* and _ital_ and mid*star and snake_case_word stay sane.",
+   "cleaned": "This bold and also bold and ital and ital and midstar and snake_case_word stay sane.",
+   "chunks": [
+    "This bold and also bold and ital and ital and midstar and snake_case_word stay sane."
+   ]
+  },
+  {
+   "name": "empty-and-blank",
+   "input": "\n\n   \n",
+   "cleaned": "",
+   "chunks": []
+  },
+  {
+   "name": "entities-and-middot",
+   "input": "A &middot; B · C &nbsp; D &amp; E &emsp; F",
+   "cleaned": "A . B . C D and E F.",
+   "chunks": [
+    "A . B . C D and E F."
+   ]
+  },
+  {
+   "name": "heading-levels",
+   "input": "# Title One\n\nBody text.\n\n## Sub Two\n\nMore body.\n\n###### Deep Six\n\nEnd.",
+   "cleaned": "Title One.\n\nBody text.\n\nSub Two.\n\nMore body.\n\nDeep Six.\n\nEnd.",
+   "chunks": [
+    "Title One.\n\nBody text.\n\nSub Two.\n\nMore body.\n\nDeep Six.\n\nEnd."
+   ]
+  },
+  {
+   "name": "inline-code",
+   "input": "Use `app.py` and `LECTOR_RESUME=1` carefully.",
+   "cleaned": "Use app.py and LECTOR_RESUME=1 carefully.",
+   "chunks": [
+    "Use app.py and LECTOR_RESUME=1 carefully."
+   ]
+  },
+  {
+   "name": "links-and-urls",
+   "input": "See [the spec](https://example.com/spec) and also https://raw.example.com/x?a=1 inline.\nA [nested [bracket] link](http://x.y) too.",
+   "cleaned": "See the spec and also inline.\nA [nested [bracket] link]( too.",
+   "chunks": [
+    "See the spec and also inline.\nA [nested [bracket] link]( too."
+   ]
+  },
+  {
+   "name": "long-document",
+   "input": "Paragraph 0. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 1. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 2. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 3. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 4. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 5. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 6. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 7. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 8. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 9. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 10. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. \n\nParagraph 11. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. ",
+   "cleaned": "Paragraph 0. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 1. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 2. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 3. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 4. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 5. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 6. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 7. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 8. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 9. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 10. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 11. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+   "chunks": [
+    "Paragraph 0. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 1. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+    "Paragraph 2. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 3. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+    "Paragraph 4. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 5. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+    "Paragraph 6. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 7. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+    "Paragraph 8. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 9. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.",
+    "Paragraph 10. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter.\n\nParagraph 11. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter. A sentence that runs along quite nicely with enough words to matter."
+   ]
+  },
+  {
+   "name": "md-file-refs",
+   "input": "Read career-advancement-plan-r3.md and notes.md today.",
+   "cleaned": "Read career-advancement-plan-r3 and notes today.",
+   "chunks": [
+    "Read career-advancement-plan-r3 and notes today."
+   ]
+  },
+  {
+   "name": "money-and-k",
+   "input": "Costs $1,234.56 or maybe 10K plus 3+ extras.",
+   "cleaned": "Costs 1,234.56 dollars or maybe 10 thousand plus 3 plus extras.",
+   "chunks": [
+    "Costs 1,234.56 dollars or maybe 10 thousand plus 3 plus extras."
+   ]
+  },
+  {
+   "name": "plain-paragraph",
+   "input": "This is a plain paragraph with nothing special in it at all.",
+   "cleaned": "This is a plain paragraph with nothing special in it at all.",
+   "chunks": [
+    "This is a plain paragraph with nothing special in it at all."
+   ]
+  },
+  {
+   "name": "section-symbol",
+   "input": "Per §102 and §105, see sections.",
+   "cleaned": "Per section 102 and section 105, see sections.",
+   "chunks": [
+    "Per section 102 and section 105, see sections."
+   ]
+  },
+  {
+   "name": "sentence-split-boundaries",
+   "input": "Short one. Another short one! A third? Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. ",
+   "cleaned": "Short one. Another short one! A third? Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only. Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.",
+   "chunks": [
+    "Short one.\n\nAnother short one!\n\nA third?\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.",
+    "Then a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only.\n\nThen a very long sentence that should still be kept whole when chunking because splitting happens at sentence boundaries only."
+   ]
+  },
+  {
+   "name": "short-line-punctuation",
+   "input": "No terminal punctuation here\nAlready has period.\nHas colon:\nHas comma,\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "cleaned": "No terminal punctuation here.\nAlready has period.\nHas colon:\nHas comma,\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+   "chunks": [
+    "No terminal punctuation here.\nAlready has period.\nHas colon:\nHas comma,\nxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+   ]
+  },
+  {
+   "name": "single-monster-paragraph",
+   "input": "One enormous sentence-free paragraph word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word ",
+   "cleaned": "One enormous sentence-free paragraph word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word",
+   "chunks": [
+    "One enormous sentence-free paragraph word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word word"
+   ]
+  },
+  {
+   "name": "table-ragged",
+   "input": "| only | row |\n|:--|--:|\n|  spaced  |  cells  |",
+   "cleaned": "only. row.\nspaced. cells.",
+   "chunks": [
+    "only. row.\nspaced. cells."
+   ]
+  },
+  {
+   "name": "table-simple",
+   "input": "| Name | Value |\n|------|-------|\n| alpha | one |\n| beta | two |",
+   "cleaned": "Name. Value.\nalpha. one.\nbeta. two.",
+   "chunks": [
+    "Name. Value.\nalpha. one.\nbeta. two."
+   ]
+  },
+  {
+   "name": "unicode-text",
+   "input": "Café naïve résumé — done. Привет 你好.",
+   "cleaned": "Café naïve résumé , done. Привет 你好.",
+   "chunks": [
+    "Café naïve résumé , done. Привет 你好."
+   ]
+  },
+  {
+   "name": "whitespace-collapse",
+   "input": "Too   many\tspaces\n\n\n\n\nand blank lines.",
+   "cleaned": "Too many spaces.\n\nand blank lines.",
+   "chunks": [
+    "Too many spaces.\n\nand blank lines."
+   ]
+  }
+ ]
+}
