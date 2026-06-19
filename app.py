@@ -85,7 +85,7 @@ SHARE_LOCK = threading.Lock()
 #   <id>.mp3     the partial/finished audio, fsync'd at each chunk boundary
 # Interrupted (queued/running) jobs resume from the last completed chunk on start.
 PERSIST_KEYS = ("status", "title", "owner", "voice", "limit", "total", "done",
-                "bytes", "words", "notify", "created", "secs", "saved", "file", "error")
+                "bytes", "words", "notify", "autosave", "created", "secs", "saved", "file", "error")
 
 
 def persist_job(job_id):
@@ -508,14 +508,17 @@ def run_job(job_id, md, voice, title, owner, resume=False):
         job.update(status="done", file=out_path, secs=round(time.time() - started))
         persist_job(job_id)
         log(owner, title, "done", f"{job['words']}w/{total}ch/{job['secs']}s")
-        if job.get("notify"):
-            saved = save_to_library(job, owner, job_id)   # durable target for the email link
+        if job.get("notify") or job.get("autosave"):
+            # autosave: API clients (the Android app) have no manual "save" step,
+            # so a job they submit must land in the Library on its own.
+            saved = save_to_library(job, owner, job_id)   # durable target (email link / API pickup)
             persist_job(job_id)
-            link = f"{BASE_URL}/library#{saved}" if saved else f"{BASE_URL}/job/{job_id}"
-            send_email(owner, f'sotto: "{title}" is ready',
-                       f"<p>Your narration <b>{_h(title)}</b> is ready "
-                       f"({job['words']} words, narrated in {fmt_duration(job['secs'])}).</p>"
-                       f'<p><a href="{link}">Listen in your Library</a>.</p>')
+            if job.get("notify"):
+                link = f"{BASE_URL}/library#{saved}" if saved else f"{BASE_URL}/job/{job_id}"
+                send_email(owner, f'sotto: "{title}" is ready',
+                           f"<p>Your narration <b>{_h(title)}</b> is ready "
+                           f"({job['words']} words, narrated in {fmt_duration(job['secs'])}).</p>"
+                           f'<p><a href="{link}">Listen in your Library</a>.</p>')
     except Exception as e:
         job.update(status="error", error=str(e))
         persist_job(job_id)
@@ -860,11 +863,12 @@ PUBLIC = {"login", "healthz", "static", "forgot", "reset",
 def gate():
     if "csrf" not in session:
         session["csrf"] = secrets.token_urlsafe(16)
-    if request.endpoint not in PUBLIC and not current_user():
+    is_api = bool(request.endpoint and request.endpoint.startswith("api_"))
+    if not is_api and request.endpoint not in PUBLIC and not current_user():
         nxt = request.full_path if request.method == "GET" else None
         return redirect(url_for("login", next=nxt) if nxt else url_for("login"))
-    if request.endpoint and request.endpoint.startswith("api_"):
-        return   # token-authenticated JSON API: no session, no CSRF
+    if is_api:
+        return   # token-authenticated JSON API: own auth in require_token, no session, no CSRF
     if request.method == "POST" and request.endpoint != "static":
         if not request.form.get("_csrf") or request.form.get("_csrf") != session.get("csrf"):
             abort(400)
@@ -1552,7 +1556,68 @@ def api_token():
 @app.route("/api/v1/me")
 @require_token
 def api_me():
-    return jsonify({"email": g.api_user})
+    u = g.api_user
+    # Voices the account may request server-side. OpenAI voices appear only for
+    # accounts in LECTOR_OPENAI_ALLOWED (the paid backend); everyone else sees
+    # Kokoro only and can never incur API charges.
+    return jsonify({"email": u, "may_openai": may_use_openai(u),
+                    "kokoro_voices": KOKORO_VOICES,
+                    "openai_voices": OPENAI_VOICES if may_use_openai(u) else [],
+                    "default_voice": default_voice_for(u)})
+
+
+@app.route("/api/v1/narrate", methods=["POST"])
+@require_token
+def api_narrate():
+    """Submit text for server-side narration. The job runs on the server (so an
+    allowed account can use the paid OpenAI backend) and auto-saves to the
+    owner's Library on completion; poll /api/v1/jobs/<id> for the result name."""
+    owner = g.api_user
+    data = request.get_json(silent=True) or {}
+    md = (data.get("text") or "").strip()
+    if not md:
+        return _api_err(400, "validation", "text required")
+    if len(md.encode("utf-8")) > MAX_INPUT:
+        return _api_err(413, "too-large", "input limit 400 KB")
+    voice = (data.get("voice") or default_voice_for(owner)).strip()
+    if voice not in voices_for(owner):
+        # Reject rather than silently downgrade: an explicit OpenAI request from
+        # an unauthorized account should fail loudly, not bill nothing quietly.
+        return _api_err(403, "voice", f"{voice} not available to this account")
+    title = (data.get("title") or "").strip()[:120]
+    if not title:
+        m = re.search(r"^#\s+(.+)$", md, re.M) or re.search(r"^(.{3,80})$", md, re.M)
+        title = (m.group(1).strip() if m else "Untitled document")
+    remember_voice(owner, voice)
+    job_id = uuid.uuid4().hex
+    limit = KOKORO_CHUNK_LIMIT if backend_of_voice(voice) == "kokoro" else CHUNK_LIMIT
+    JOBS[job_id] = {"status": "queued", "title": title, "owner": owner, "voice": voice,
+                    "limit": limit, "created": time.time(), "done": 0, "total": None,
+                    "md": md, "notify": bool(data.get("notify")), "autosave": True}
+    try:
+        with open(os.path.join(JOBS_DIR, job_id + ".md.src"), "w", encoding="utf-8") as f:
+            f.write(md)
+    except OSError:
+        pass
+    persist_job(job_id)
+    log(owner, title, "api-narrate", f"{len(md.split())}w voice={voice}")
+    threading.Thread(target=run_job, args=(job_id, md, voice, title, owner), daemon=True).start()
+    return jsonify({"job_id": job_id, "status": "queued", "voice": voice,
+                    "backend": backend_of_voice(voice)}), 202
+
+
+@app.route("/api/v1/jobs/<job_id>")
+@require_token
+def api_job(job_id):
+    job = JOBS.get(job_id)
+    if not job or job.get("owner") != g.api_user:
+        return _api_err(404, "not-found", "no such job")
+    total = job.get("total") or 0
+    done = job.get("done", 0)
+    pct = int(100 * done / total) if total else (100 if job.get("status") == "done" else 0)
+    return jsonify({"status": job.get("status"), "done": done, "total": job.get("total"),
+                    "words": job.get("words"), "pct": pct, "error": job.get("error"),
+                    "name": job.get("saved")})   # set once the result is in the Library
 
 
 @app.route("/api/v1/library")
