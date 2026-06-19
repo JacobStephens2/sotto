@@ -557,14 +557,13 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
    corners. Dark mode is the same page by candlelight. */
 @font-face{font-family:'EB Garamond';src:url('/font/eb_garamond.ttf') format('truetype');font-weight:400 700;font-display:swap}
 @font-face{font-family:'Medieval';src:url('/font/medieval_sharp.ttf') format('truetype');font-display:swap}
-:root{color-scheme:light dark;
- --vellum:#F3E9CF;--surface:#F8EFD7;--ink:#2A2014;--fade:#534935;
- --lapis:#2A3F8F;--gold:#8A6A12;--goldpale:#F1DFA6;--rubric:#A12C22;
- --on-lapis:#FBF3DD;--outline:#887A5C;--rule:#D0C3A2}
-@media (prefers-color-scheme:dark){:root{
- --vellum:#1C1710;--surface:#14100A;--ink:#EBE0C8;--fade:#CFC2A2;
- --lapis:#AEC2F5;--gold:#E6C66A;--goldpale:#584400;--rubric:#F2B3A8;
- --on-lapis:#0E1F52;--outline:#988B6D;--rule:#4C4534}}
+/* Always parchment - a manuscript is written on vellum, so the web app does
+   not follow the OS dark theme (color-scheme:light also keeps native controls
+   - the audio player, inputs - on a light, parchment-matching ground). */
+:root{color-scheme:light;
+ --vellum:#E9DCBE;--surface:#F2E8CF;--ink:#2A2014;--fade:#534935;
+ --lapis:#2A3F8F;--gold:#8A6A12;--goldpale:#EFDDA4;--rubric:#A12C22;
+ --on-lapis:#FBF3DD;--outline:#9A8A66;--rule:#CBBD99}
 body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:var(--ink);background-color:var(--vellum);
  background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='v'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23v)' opacity='0.05'/></svg>")}
 nav{display:flex;gap:.9rem;align-items:center;font-size:.9rem;border-bottom:1px solid var(--rule);padding-bottom:.6rem;margin-bottom:1.2rem}
