@@ -18,6 +18,7 @@ JOBS_DIR = os.path.join(APP_DIR, "jobs")
 SAMPLES_DIR = os.path.join(APP_DIR, "samples")
 LIBRARY_DIR = os.path.join(APP_DIR, "library")
 STATE_DIR = os.path.join(APP_DIR, "state")
+FONTS_DIR = os.path.join(APP_DIR, "fonts")
 USERS_PATH = os.path.join(STATE_DIR, "users.json")
 SECRET_PATH = os.path.join(STATE_DIR, "secret.key")
 LOG_PATH = os.path.join(APP_DIR, "lector.log")
@@ -540,41 +541,59 @@ def log(who, title, status, detail):
 # ------------------------------------------------------------------------ templates
 # Inline SVG favicon: a speaker + sound waves on the brand navy - "documents read aloud".
 FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
-           '<rect width="32" height="32" rx="7" fill="#002A4F"/>'
-           '<path d="M8 13h4l5-5v16l-5-5H8z" fill="#fff"/>'
-           '<path d="M20 12a5 5 0 0 1 0 8" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'
-           '<path d="M22.5 9a9 9 0 0 1 0 14" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round"/>'
+           '<rect width="32" height="32" rx="5" fill="#2A3F8F"/>'
+           '<path d="M8 13h4l5-5v16l-5-5H8z" fill="#E6C66A"/>'
+           '<path d="M20 12a5 5 0 0 1 0 8" fill="none" stroke="#E6C66A" stroke-width="2" stroke-linecap="round"/>'
+           '<path d="M22.5 9a9 9 0 0 1 0 14" fill="none" stroke="#E6C66A" stroke-width="2" stroke-linecap="round"/>'
            '</svg>')
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{{title}}</title>
 <link rel="icon" type="image/svg+xml" href="/favicon.svg">
 <style>
-:root{color-scheme:light dark}
-body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:#1a1a1a;background:#fafafa}
-nav{display:flex;gap:.9rem;align-items:center;font-size:.9rem;border-bottom:1px solid #e3e3e3;padding-bottom:.6rem;margin-bottom:1.2rem}
-nav .brand{font-weight:700}nav .sp{flex:1}nav .who{color:#777}
-h1{font-size:1.7rem;margin:0 0 .2rem}h1 a{color:inherit;text-decoration:none}
-.sub{color:#666;margin:.1rem 0 1.4rem}
-textarea{width:100%;min-height:13rem;font:14px/1.5 ui-monospace,Menlo,monospace;padding:.7rem;border:1px solid #ccc;border-radius:8px;box-sizing:border-box}
+/* Sotto's illuminated-manuscript style, matched to the Android app: the
+   Books-of-Hours triad (lapis, gold, rubric) on vellum with iron-gall ink;
+   EB Garamond for headings, UnifrakturMaguntia for the wordmark; squared
+   corners. Dark mode is the same page by candlelight. */
+@font-face{font-family:'EB Garamond';src:url('/font/eb_garamond.ttf') format('truetype');font-weight:400 700;font-display:swap}
+@font-face{font-family:'Unifraktur';src:url('/font/unifraktur_maguntia.ttf') format('truetype');font-display:swap}
+:root{color-scheme:light dark;
+ --vellum:#F3E9CF;--surface:#F8EFD7;--ink:#2A2014;--fade:#534935;
+ --lapis:#2A3F8F;--gold:#8A6A12;--goldpale:#F1DFA6;--rubric:#A12C22;
+ --on-lapis:#FBF3DD;--outline:#887A5C;--rule:#D0C3A2}
+@media (prefers-color-scheme:dark){:root{
+ --vellum:#1C1710;--surface:#14100A;--ink:#EBE0C8;--fade:#CFC2A2;
+ --lapis:#AEC2F5;--gold:#E6C66A;--goldpale:#584400;--rubric:#F2B3A8;
+ --on-lapis:#0E1F52;--outline:#988B6D;--rule:#4C4534}}
+body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:var(--ink);background:var(--vellum)}
+nav{display:flex;gap:.9rem;align-items:center;font-size:.9rem;border-bottom:1px solid var(--rule);padding-bottom:.6rem;margin-bottom:1.2rem}
+nav .brand,.brand{font-family:'Unifraktur',serif;font-size:1.5rem;font-weight:400;text-transform:capitalize;color:var(--lapis);letter-spacing:.02em}nav .sp{flex:1}nav .who{color:var(--fade)}
+h1{font-family:'Unifraktur',serif;font-size:2.1rem;font-weight:400;text-transform:capitalize;letter-spacing:.02em;color:var(--lapis);margin:0 0 .2rem}
+h1 a{color:inherit;text-decoration:none}
+h1.pagetitle{font-family:'EB Garamond',Georgia,serif;font-weight:600;font-size:1.9rem;text-transform:none;letter-spacing:0;color:var(--ink)}
+h2,h3{font-family:'EB Garamond',Georgia,serif}
+.sub{color:var(--rubric);font-family:'EB Garamond',Georgia,serif;font-size:1.15rem;margin:.1rem 0 1.4rem}
+textarea{width:100%;min-height:13rem;font:14px/1.5 ui-monospace,Menlo,monospace;padding:.7rem;border:1px solid var(--outline);border-radius:3px;box-sizing:border-box;background:var(--surface);color:var(--ink)}
 label{display:block;font-weight:600;margin:1rem 0 .3rem}
-select,input{font:inherit;padding:.45rem;border:1px solid #ccc;border-radius:6px}
+select,input{font:inherit;padding:.45rem;border:1px solid var(--outline);border-radius:3px;background:var(--surface);color:var(--ink)}
 input[type=file]{border:0;padding:.4rem 0}
-button{font:inherit;font-weight:600;background:#002A4F;color:#fff;border:0;border-radius:8px;padding:.6rem 1.3rem;margin-top:1rem;cursor:pointer}
+button{font:inherit;font-weight:600;background:var(--lapis);color:var(--on-lapis);border:0;border-radius:3px;padding:.6rem 1.3rem;margin-top:1rem;cursor:pointer}
 .row{display:flex;gap:1.5rem;flex-wrap:wrap;align-items:end}
-.muted{color:#777;font-size:.92rem}a{color:#064b87}
-footer{margin-top:2.5rem;border-top:1px solid #e3e3e3;padding-top:1rem;color:#777;font-size:.86rem}
-.bar{height:.5rem;background:#e6e6e6;border-radius:4px;overflow:hidden;margin:.6rem 0}.bar>i{display:block;height:100%;background:#064b87}
+.muted{color:var(--fade);font-size:.92rem}a{color:var(--lapis)}
+footer{margin-top:2.5rem;border-top:1px solid var(--rule);padding-top:1rem;color:var(--fade);font-size:.86rem}
+footer::before{content:"\\2767";display:block;text-align:center;color:var(--gold);font-size:1.3rem;line-height:1;margin:0 0 .9rem}
+.colophon{margin-top:.8rem;font-size:.8rem;color:var(--fade)}
+.bar{height:.5rem;background:var(--goldpale);border-radius:2px;overflow:hidden;margin:.6rem 0}.bar>i{display:block;height:100%;background:var(--lapis)}
 audio{width:100%;margin:.6rem 0 .2rem}
 .skiprow{display:flex;gap:.5rem;margin:0 0 .4rem}
-.skiprow button{margin:0;padding:.3rem .8rem;font-size:.85rem;background:#eef1f4;color:#13314d;border:1px solid #cdd6df}
-.voicegroup{font-weight:600;font-size:.82rem;color:#444;margin:.9rem 0 .15rem}
+.skiprow button{margin:0;padding:.3rem .8rem;font-size:.85rem;background:var(--goldpale);color:var(--ink);border:1px solid var(--gold)}
+.voicegroup{font-weight:600;font-size:.82rem;color:var(--gold);margin:.9rem 0 .15rem}
 .voicegrid{display:flex;flex-wrap:wrap;gap:.7rem;margin:.3rem 0}
-.vc{display:flex;flex-direction:column;gap:.2rem;font-size:.8rem;color:#555}.vc audio{width:12.5rem;height:2.2rem;margin:0}
-table.u{border-collapse:collapse;width:100%}table.u td,table.u th{border-bottom:1px solid #e3e3e3;text-align:left;padding:.4rem .3rem;font-size:.95rem}
-pre.src{white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;background:#f0f0f0;padding:.7rem;border-radius:6px;overflow:auto;max-height:24rem;margin:.5rem 0 0}
-.shareurl{width:100%;box-sizing:border-box;font:12px ui-monospace,Menlo,monospace;padding:.4rem;margin:.3rem 0 0;color:#333;background:#f4f6f8}
-.linkbtn{background:none;color:#064b87;border:0;padding:0;margin:0;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;text-decoration:underline}
+.vc{display:flex;flex-direction:column;gap:.2rem;font-size:.8rem;color:var(--fade)}.vc audio{width:12.5rem;height:2.2rem;margin:0}
+table.u{border-collapse:collapse;width:100%}table.u td,table.u th{border-bottom:1px solid var(--rule);text-align:left;padding:.4rem .3rem;font-size:.95rem}
+pre.src{white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;background:var(--surface);padding:.7rem;border-radius:3px;overflow:auto;max-height:24rem;margin:.5rem 0 0;border:1px solid var(--rule)}
+.shareurl{width:100%;box-sizing:border-box;font:12px ui-monospace,Menlo,monospace;padding:.4rem;margin:.3rem 0 0;color:var(--ink);background:var(--surface)}
+.linkbtn{background:none;color:var(--lapis);border:0;padding:0;margin:0;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;text-decoration:underline}
 </style></head><body>
 <nav>{% if user %}<a class=brand href="/">sotto</a><a href="/library">library</a><span class=sp></span>
 <span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
@@ -588,7 +607,8 @@ audio; those voices are synthetic and never leave the server.{% if may_openai %}
 also available to your account and send text to OpenAI's hosted API (billable).{% endif %}{% else %}Audio is synthesized by
 OpenAI ({{model}}); the voices are synthetic and the model's training provenance is not disclosed
 by the vendor. The API key lives only in this server's environment.{% endif %}
-<a href="/about">How it works &amp; boundaries</a>.</footer>
+<a href="/about">How it works &amp; boundaries</a>.
+<div class=colophon>Colophon: set in EB Garamond &amp; UnifrakturMaguntia (SIL Open Font License).</div></footer>
 <script>function lskip(id,n){var a=document.getElementById(id);if(a){a.currentTime=Math.max(0,(a.currentTime||0)+n);}}</script>
 </body></html>"""
 
@@ -773,7 +793,7 @@ ENTRY = """<h1><a href="/">sotto</a></h1>
 <pre class=src>{{text}}</pre></details>{% endif %}
 <p style="margin-top:1.4rem"><a href="/library">Back to Library</a></p>"""
 
-SHARE_VIEW = """<h1>{{heading}}</h1>
+SHARE_VIEW = """<h1 class=pagetitle>{{heading}}</h1>
 <p class=sub>Shared with you via sotto &middot; narrated audio</p>
 <audio id=sh controls preload=metadata src="/share/{{token}}/audio"></audio>
 <div class=skiprow><button type=button onclick="lskip('sh',-15)">&laquo; 15s</button><button type=button onclick="lskip('sh',15)">15s &raquo;</button></div>
@@ -854,7 +874,7 @@ def render(body_tpl, title, **ctx):
 
 # --------------------------------------------------------------------------- gate
 PUBLIC = {"login", "healthz", "static", "forgot", "reset",
-          "share", "share_audio", "share_text", "favicon",
+          "share", "share_audio", "share_text", "favicon", "font_file",
           "api_token", "api_me", "api_library", "api_audio", "api_text",
           "api_put", "api_patch", "api_delete"}
 
@@ -1430,6 +1450,21 @@ def about():
 def favicon():
     return Response(FAVICON, mimetype="image/svg+xml",
                     headers={"Cache-Control": "public, max-age=86400"})
+
+
+# Self-hosted brand fonts (no third-party CDN, consistent with the boundary
+# story): EB Garamond for headings, UnifrakturMaguntia for the wordmark - the
+# same faces as the Android app's illuminated theme. Both SIL OFL.
+FONT_FILES = {"eb_garamond.ttf", "unifraktur_maguntia.ttf"}
+
+
+@app.route("/font/<name>")
+def font_file(name):
+    if name not in FONT_FILES:
+        abort(404)
+    resp = send_file(os.path.join(FONTS_DIR, name), mimetype="font/ttf", conditional=True)
+    resp.headers["Cache-Control"] = "public, max-age=31536000, immutable"
+    return resp
 
 
 @app.route("/healthz")
