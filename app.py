@@ -565,7 +565,8 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  --vellum:#1C1710;--surface:#14100A;--ink:#EBE0C8;--fade:#CFC2A2;
  --lapis:#AEC2F5;--gold:#E6C66A;--goldpale:#584400;--rubric:#F2B3A8;
  --on-lapis:#0E1F52;--outline:#988B6D;--rule:#4C4534}}
-body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:var(--ink);background:var(--vellum)}
+body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:var(--ink);background-color:var(--vellum);
+ background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='140' height='140'><filter id='v'><feTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='2' stitchTiles='stitch'/><feColorMatrix type='saturate' values='0'/></filter><rect width='140' height='140' filter='url(%23v)' opacity='0.05'/></svg>")}
 nav{display:flex;gap:.9rem;align-items:center;font-size:.9rem;border-bottom:1px solid var(--rule);padding-bottom:.6rem;margin-bottom:1.2rem}
 nav .brand,.brand{font-family:'Medieval',serif;font-size:1.5rem;font-weight:400;text-transform:capitalize;color:var(--lapis);letter-spacing:.02em}nav .sp{flex:1}nav .who{color:var(--fade)}
 h1{font-family:'Medieval',serif;font-size:2.1rem;font-weight:400;text-transform:capitalize;letter-spacing:.02em;color:var(--lapis);margin:0 0 .2rem}
@@ -574,7 +575,7 @@ h1.pagetitle{font-family:'EB Garamond',Georgia,serif;font-weight:600;font-size:1
 h2,h3{font-family:'EB Garamond',Georgia,serif}
 .sub{color:var(--rubric);font-family:'EB Garamond',Georgia,serif;font-size:1.15rem;margin:.1rem 0 1.4rem}
 textarea{width:100%;min-height:13rem;font:14px/1.5 ui-monospace,Menlo,monospace;padding:.7rem;border:1px solid var(--outline);border-radius:3px;box-sizing:border-box;background:var(--surface);color:var(--ink)}
-label{display:block;font-weight:600;margin:1rem 0 .3rem}
+label{display:block;font-weight:600;margin:1rem 0 .3rem;color:var(--rubric);text-transform:uppercase;letter-spacing:.05em;font-size:.82rem}
 select,input{font:inherit;padding:.45rem;border:1px solid var(--outline);border-radius:3px;background:var(--surface);color:var(--ink)}
 input[type=file]{border:0;padding:.4rem 0}
 button{font:inherit;font-weight:600;background:var(--lapis);color:var(--on-lapis);border:0;border-radius:3px;padding:.6rem 1.3rem;margin-top:1rem;cursor:pointer}
@@ -629,7 +630,7 @@ HOME = """<h1><a href="/">sotto</a></h1>
 {% for label, vs in groups %}<div class=voicegroup>{{label}}</div>
 <div class=voicegrid>{% for v in vs %}<div class=vc><span>{{v}}</span><audio controls preload=none src="/sample/{{v}}"></audio></div>{% endfor %}</div>
 {% endfor %}
-<label style="font-weight:400;display:flex;align-items:center;gap:.5rem;margin-top:1.1rem"><input type=checkbox name=notify value=1 checked style="width:auto;margin:0"> Email me a link when it's ready (it runs on the server, so you can close this page)</label>
+<label style="font-weight:400;display:flex;align-items:center;gap:.5rem;margin-top:1.1rem;text-transform:none;color:var(--ink);letter-spacing:normal;font-size:1rem"><input type=checkbox name=notify value=1 checked style="width:auto;margin:0"> Email me a link when it's ready (it runs on the server, so you can close this page)</label>
 <button type=submit>Convert to audio</button>
 </form>
 <p class=muted style=margin-top:1.4rem>Citations like <code>&sect;102</code> are read as "section 102"; tables are read as plain sentences; links and raw URLs are dropped.</p>
