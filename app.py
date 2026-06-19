@@ -540,12 +540,39 @@ def log(who, title, status, detail):
 
 # ------------------------------------------------------------------------ templates
 # Inline SVG favicon: a speaker + sound waves on the brand navy - "documents read aloud".
+# The favicon is now a versal: an illuminated initial (gold S on a lapis panel
+# with a gold rule), matching the Android app-icon redraw.
 FAVICON = ('<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">'
            '<rect width="32" height="32" rx="5" fill="#2A3F8F"/>'
-           '<path d="M8 13h4l5-5v16l-5-5H8z" fill="#E6C66A"/>'
-           '<path d="M20 12a5 5 0 0 1 0 8" fill="none" stroke="#E6C66A" stroke-width="2" stroke-linecap="round"/>'
-           '<path d="M22.5 9a9 9 0 0 1 0 14" fill="none" stroke="#E6C66A" stroke-width="2" stroke-linecap="round"/>'
+           '<rect x="3" y="3" width="26" height="26" rx="3" fill="none" stroke="#E6C66A" stroke-width="1.3"/>'
+           '<text x="16" y="24" font-family="Georgia,serif" font-size="22" font-weight="bold" '
+           'fill="#E6C66A" text-anchor="middle">S</text>'
            '</svg>')
+
+# The Sotto wordmark as an Insular "diminuendo": the opening letter full size,
+# each following letter a step smaller. Per-letter spans - CSS alone can't size
+# letters individually. Used for the h1 masthead (the nav brand stays plain).
+WORDMARK = "".join('<span style="font-size:%d%%">%s</span>' % (max(62, 100 - 9 * i), c)
+                   for i, c in enumerate("Sotto"))
+
+# A larger illuminated gilded versal with filigree corner scrolls, for the
+# sign-in page - a historiated initial opening the "book".
+VERSAL_SVG = (
+    '<svg viewBox="0 0 80 80" xmlns="http://www.w3.org/2000/svg" width="84" height="84" aria-hidden="true">'
+    '<rect x="2" y="2" width="76" height="76" rx="7" fill="#2A3F8F"/>'
+    '<rect x="7" y="7" width="66" height="66" rx="4" fill="none" stroke="#E6C66A" stroke-width="1.4"/>'
+    '<g fill="none" stroke="#E6C66A" stroke-width="1.4" stroke-linecap="round">'
+    '<path d="M12 22 Q12 12 22 12"/><path d="M68 22 Q68 12 58 12"/>'
+    '<path d="M12 58 Q12 68 22 68"/><path d="M68 58 Q68 68 58 68"/></g>'
+    '<g fill="#E6C66A"><circle cx="16" cy="16" r="1.7"/><circle cx="64" cy="16" r="1.7"/>'
+    '<circle cx="16" cy="64" r="1.7"/><circle cx="64" cy="64" r="1.7"/></g>'
+    '<text x="40" y="58" font-family="Georgia,serif" font-size="52" font-weight="bold" '
+    'fill="#E6C66A" text-anchor="middle">S</text></svg>')
+
+# Wordmark + versal as Jinja globals so every template has them, including the
+# auth pages that render directly without the render() helper.
+app.jinja_env.globals["wm"] = WORDMARK
+app.jinja_env.globals["versal"] = VERSAL_SVG
 
 PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
 <meta name=viewport content="width=device-width,initial-scale=1"><title>{{title}}</title>
@@ -594,6 +621,17 @@ table.u{border-collapse:collapse;width:100%}table.u td,table.u th{border-bottom:
 pre.src{white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;background:var(--surface);padding:.7rem;border-radius:3px;overflow:auto;max-height:24rem;margin:.5rem 0 0;border:1px solid var(--rule)}
 .shareurl{width:100%;box-sizing:border-box;font:12px ui-monospace,Menlo,monospace;padding:.4rem;margin:.3rem 0 0;color:var(--ink);background:var(--surface)}
 .linkbtn{background:none;color:var(--lapis);border:0;padding:0;margin:0;font:inherit;font-size:.92rem;font-weight:600;cursor:pointer;text-decoration:underline}
+h1 .diminuendo,h1 span{vertical-align:baseline}
+/* True sunk drop-cap: a multi-line illuminated initial opening a reading. */
+.reading::first-letter{float:left;font-family:'EB Garamond',Georgia,serif;font-weight:700;color:var(--rubric);font-size:3.6em;line-height:.66;padding:.04em .1em 0 0}
+.versal{display:block;margin:.2rem 0 1rem}
+/* Foliate margin rules: gold vines down both margins, wide screens only - a
+   manuscript's living border, kept faint and out of the reading column. */
+@media (min-width:66rem){
+ body::before,body::after{content:"";position:fixed;top:0;bottom:0;width:42px;opacity:.45;pointer-events:none;background-repeat:repeat-y;background-position:center;
+  background-image:url("data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' width='42' height='190'><g fill='none' stroke='%238A6A12' stroke-width='2'><path d='M21 0 C13 32 29 54 21 95 C13 136 29 158 21 190'/></g><g fill='%238A6A12'><path d='M21 36 q-13 -5 -15 -19 q13 3 15 19 z'/><path d='M21 78 q13 -5 15 -19 q-13 3 -15 19 z'/><path d='M21 120 q-13 -5 -15 -19 q13 3 15 19 z'/><path d='M21 162 q13 -5 15 -19 q-13 3 -15 19 z'/></g></svg>")}
+ body::before{left:0}body::after{right:0;transform:scaleX(-1)}
+}
 </style></head><body>
 <nav>{% if user %}<a class=brand href="/">sotto</a><a href="/library">library</a><span class=sp></span>
 <span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
@@ -612,7 +650,7 @@ by the vendor. The API key lives only in this server's environment.{% endif %}
 <script>function lskip(id,n){var a=document.getElementById(id);if(a){a.currentTime=Math.max(0,(a.currentTime||0)+n);}}</script>
 </body></html>"""
 
-HOME = """<h1><a href="/">sotto</a></h1>
+HOME = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub>Paste a markdown document. Get an MP3 you can listen to. &middot; <a href="/library">Library</a></p>
 <form method=post action="/convert" enctype=multipart/form-data>
 <input type=hidden name=_csrf value="{{csrf}}">
@@ -652,7 +690,7 @@ HOME = """<h1><a href="/">sotto</a></h1>
 })();
 </script>"""
 
-JOB = """<h1><a href="/">sotto</a></h1>
+JOB = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub>{{job.title}}</p>
 {% if job.status in ['queued','running','done'] %}<details style="margin:0 0 .8rem"><summary class=muted style="cursor:pointer">Rename</summary>
 <form method=post action="/job/{{id}}/rename" style="margin-top:.4rem">
@@ -720,7 +758,7 @@ a.addEventListener('ended',function(){try{sessionStorage.removeItem(PK)}catch(e)
 <p><b>Error.</b> {{job.get('error','unknown')}}</p><p><a href="/">Try again</a></p>
 {% endif %}"""
 
-LIB = """<h1><a href="/">sotto</a></h1>
+LIB = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub>Library &middot; {{user}}'s saved narrations</p>
 {% if active %}
 <h2 style="font-size:1.05rem;margin:1.1rem 0 .3rem">In progress</h2>
@@ -767,7 +805,7 @@ function tick(){rows.forEach(function(row){var id=row.getAttribute('data-job');
 setTimeout(tick,5000);})();
 </script>"""
 
-ENTRY = """<h1><a href="/">sotto</a></h1>
+ENTRY = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub><a href="/library">Library</a> &middot; saved narration</p>
 <h2 style="font-size:1.25rem;margin:.2rem 0 .1rem">{{heading}}</h2>
 <p class=muted style="margin:.1rem 0 .6rem">{% if length %}{{length}} &middot; {% endif %}{{size}}{% if secs %} &middot; narrated in {{ fmt_duration(secs) }}{% endif %}{% if words %} &middot; {{words}} words{% endif %}</p>
@@ -802,7 +840,7 @@ SHARE_VIEW = """<h1 class=pagetitle>{{heading}}</h1>
 <pre class=src>{{text}}</pre></details>{% endif %}
 <p class=muted style="margin-top:1.4rem">Anyone with this link can listen. It was shared deliberately by its owner, who can revoke it.</p>"""
 
-LOGIN = """<h1>sotto</h1><p class=sub>Reads your documents aloud. Please sign in.</p>
+LOGIN = """<span class=versal>{{versal|safe}}</span><h1>{{wm|safe}}</h1><p class=sub>Reads your documents aloud, in your own voice.</p>
 {% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
 <form method=post action="/login{{nextq}}">
 <input type=hidden name=_csrf value="{{csrf}}">
@@ -812,7 +850,7 @@ LOGIN = """<h1>sotto</h1><p class=sub>Reads your documents aloud. Please sign in
 </form>
 <p class=muted><a href="/forgot">Forgot password?</a></p>"""
 
-ACCOUNT = """<h1><a href="/">sotto</a></h1><p class=sub>Account &middot; {{user}}</p>
+ACCOUNT = """<h1><a href="/">{{wm|safe}}</a></h1><p class=sub>Account &middot; {{user}}</p>
 {% if msg %}<p style="color:#197">{{msg}}</p>{% endif %}{% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
 <form method=post action="/account">
 <input type=hidden name=_csrf value="{{csrf}}">
@@ -827,7 +865,7 @@ ACCOUNT = """<h1><a href="/">sotto</a></h1><p class=sub>Account &middot; {{user}
 <td><form method=post action="/account/tokens/revoke" style="margin:0"><input type=hidden name=_csrf value="{{csrf}}"><input type=hidden name=hash value="{{t.hash}}"><button class=linkbtn type=submit>revoke</button></form></td></tr>{% endfor %}
 </table>{% else %}<p class=muted>No tokens.</p>{% endif %}"""
 
-ADMIN = """<h1><a href="/">sotto</a></h1><p class=sub>Admin &middot; accounts</p>
+ADMIN = """<h1><a href="/">{{wm|safe}}</a></h1><p class=sub>Admin &middot; accounts</p>
 {% if msg %}<p style="color:#197">{{msg}}</p>{% endif %}{% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
 <table class=u><tr><th>Email</th><th>Role</th><th></th></tr>
 {% for u,info in users.items() %}<tr><td>{{u}}</td><td>{{'admin' if info.admin else 'user'}}</td>
@@ -842,7 +880,7 @@ ADMIN = """<h1><a href="/">sotto</a></h1><p class=sub>Admin &middot; accounts</p
 </form>"""
 
 
-FORGOT = """<h1>sotto</h1><p class=sub>Reset your password</p>
+FORGOT = """<h1>{{wm|safe}}</h1><p class=sub>Reset your password</p>
 {% if sent %}<p>If an account exists for <b>{{email}}</b>, a password-reset link is on its way. Check your inbox.</p>
 <p class=muted><a href="/login">Back to sign in</a></p>
 {% else %}<form method=post action="/forgot"><input type=hidden name=_csrf value="{{csrf}}">
@@ -850,17 +888,17 @@ FORGOT = """<h1>sotto</h1><p class=sub>Reset your password</p>
 <button type=submit>Send reset link</button></form>
 <p class=muted><a href="/login">Back to sign in</a></p>{% endif %}"""
 
-RESET = """<h1>sotto</h1><p class=sub>{{ 'Set your password' if kind=='invite' else 'Choose a new password' }}</p>
+RESET = """<h1>{{wm|safe}}</h1><p class=sub>{{ 'Set your password' if kind=='invite' else 'Choose a new password' }}</p>
 {% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
 <p class=muted>For <b>{{email}}</b>.</p>
 <form method=post><input type=hidden name=_csrf value="{{csrf}}">
 <label for=p>New password</label><input id=p name=new type=password autocomplete=new-password autofocus>
 <button type=submit>{{ 'Set password' if kind=='invite' else 'Reset password' }}</button></form>"""
 
-RESET_BAD = """<h1>sotto</h1><p class=sub>Link expired</p>
+RESET_BAD = """<h1>{{wm|safe}}</h1><p class=sub>Link expired</p>
 <p>This link is invalid or has expired. <a href="/forgot">Request a new one</a>, or ask an administrator to re-send your invite.</p>"""
 
-RESET_DONE = """<h1>sotto</h1><p class=sub>Password set</p><p>Your password is set. <a href="/login">Sign in</a>.</p>"""
+RESET_DONE = """<h1>{{wm|safe}}</h1><p class=sub>Password set</p><p>Your password is set. <a href="/login">Sign in</a>.</p>"""
 
 
 def render(body_tpl, title, **ctx):
@@ -1473,9 +1511,9 @@ def healthz():
     return "ok\n", 200
 
 
-ABOUT = """<h1><a href="/">sotto</a></h1>
+ABOUT = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub>How it works, and the boundaries it keeps</p>
-<p>sotto turns a markdown document into a narrated MP3. It cleans the markup first
+<p class=reading>sotto turns a markdown document into a narrated MP3. It cleans the markup first
 (links and raw URLs dropped, <code>&sect;102</code> read as "section 102", tables flattened
 into sentences), splits the text into chunks, sends each to {% if provider=='kokoro' %}a
 text-to-speech model running on this server{% else %}OpenAI's text-to-speech API{% endif %},
