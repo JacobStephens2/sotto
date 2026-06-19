@@ -556,7 +556,7 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
    EB Garamond for headings, UnifrakturMaguntia for the wordmark; squared
    corners. Dark mode is the same page by candlelight. */
 @font-face{font-family:'EB Garamond';src:url('/font/eb_garamond.ttf') format('truetype');font-weight:400 700;font-display:swap}
-@font-face{font-family:'Unifraktur';src:url('/font/unifraktur_maguntia.ttf') format('truetype');font-display:swap}
+@font-face{font-family:'Medieval';src:url('/font/medieval_sharp.ttf') format('truetype');font-display:swap}
 :root{color-scheme:light dark;
  --vellum:#F3E9CF;--surface:#F8EFD7;--ink:#2A2014;--fade:#534935;
  --lapis:#2A3F8F;--gold:#8A6A12;--goldpale:#F1DFA6;--rubric:#A12C22;
@@ -567,8 +567,8 @@ PAGE = """<!doctype html><html lang=en><head><meta charset=utf-8>
  --on-lapis:#0E1F52;--outline:#988B6D;--rule:#4C4534}}
 body{font:17px/1.6 -apple-system,Segoe UI,Roboto,sans-serif;max-width:46rem;margin:1.2rem auto;padding:0 1.1rem;color:var(--ink);background:var(--vellum)}
 nav{display:flex;gap:.9rem;align-items:center;font-size:.9rem;border-bottom:1px solid var(--rule);padding-bottom:.6rem;margin-bottom:1.2rem}
-nav .brand,.brand{font-family:'Unifraktur',serif;font-size:1.5rem;font-weight:400;text-transform:capitalize;color:var(--lapis);letter-spacing:.02em}nav .sp{flex:1}nav .who{color:var(--fade)}
-h1{font-family:'Unifraktur',serif;font-size:2.1rem;font-weight:400;text-transform:capitalize;letter-spacing:.02em;color:var(--lapis);margin:0 0 .2rem}
+nav .brand,.brand{font-family:'Medieval',serif;font-size:1.5rem;font-weight:400;text-transform:capitalize;color:var(--lapis);letter-spacing:.02em}nav .sp{flex:1}nav .who{color:var(--fade)}
+h1{font-family:'Medieval',serif;font-size:2.1rem;font-weight:400;text-transform:capitalize;letter-spacing:.02em;color:var(--lapis);margin:0 0 .2rem}
 h1 a{color:inherit;text-decoration:none}
 h1.pagetitle{font-family:'EB Garamond',Georgia,serif;font-weight:600;font-size:1.9rem;text-transform:none;letter-spacing:0;color:var(--ink)}
 h2,h3{font-family:'EB Garamond',Georgia,serif}
@@ -608,7 +608,7 @@ also available to your account and send text to OpenAI's hosted API (billable).{
 OpenAI ({{model}}); the voices are synthetic and the model's training provenance is not disclosed
 by the vendor. The API key lives only in this server's environment.{% endif %}
 <a href="/about">How it works &amp; boundaries</a>.
-<div class=colophon>Colophon: set in EB Garamond &amp; UnifrakturMaguntia (SIL Open Font License).</div></footer>
+<div class=colophon>Colophon: set in EB Garamond &amp; MedievalSharp (SIL Open Font License).</div></footer>
 <script>function lskip(id,n){var a=document.getElementById(id);if(a){a.currentTime=Math.max(0,(a.currentTime||0)+n);}}</script>
 </body></html>"""
 
@@ -1453,9 +1453,10 @@ def favicon():
 
 
 # Self-hosted brand fonts (no third-party CDN, consistent with the boundary
-# story): EB Garamond for headings, UnifrakturMaguntia for the wordmark - the
-# same faces as the Android app's illuminated theme. Both SIL OFL.
-FONT_FILES = {"eb_garamond.ttf", "unifraktur_maguntia.ttf"}
+# story): EB Garamond for headings, MedievalSharp for the wordmark - the same
+# faces as the Android app's illuminated theme. Both SIL OFL. (MedievalSharp
+# replaced UnifrakturMaguntia, whose blackletter capital S read as a "g".)
+FONT_FILES = {"eb_garamond.ttf", "medieval_sharp.ttf"}
 
 
 @app.route("/font/<name>")
