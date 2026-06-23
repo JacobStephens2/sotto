@@ -756,7 +756,9 @@ a.addEventListener('ended',function(){try{sessionStorage.removeItem(PK)}catch(e)
 {% else %}<form method=post action="/job/{{id}}/save"><input type=hidden name=_csrf value="{{csrf}}"><button type=submit>Save to Library</button></form>{% endif %}
 {% else %}
 <p><b>Error.</b> {{job.get('error','unknown')}}</p><p><a href="/">Try again</a></p>
-{% endif %}"""
+{% endif %}
+{% if src %}<details style="margin-top:1.4rem"{% if job.status in ['done','stopped','error'] %} open{% endif %}><summary class=muted style="cursor:pointer">Text you entered</summary>
+<pre class=src>{{src}}</pre></details>{% endif %}"""
 
 LIB = """<h1><a href="/">{{wm|safe}}</a></h1>
 <p class=sub>Library &middot; {{user}}'s saved narrations</p>
@@ -1184,10 +1186,18 @@ def job_page(job_id):
     pct = int(100 * job.get("done", 0) / (job.get("total") or 1)) if job["status"] == "running" else (100 if job["status"] == "done" else 0)
     slug = re.sub(r"[^a-z0-9]+", "-", job["title"].lower()).strip("-")[:60] or "sotto"
     elapsed = fmt_duration(time.time() - job["created"]) if job.get("created") else None
+    # The text the user entered, for review on this page. Prefer the in-memory
+    # copy; fall back to the .md.src sidecar (survives a restart/resume).
+    src = job.get("md")
+    if not src:
+        try:
+            src = open(os.path.join(JOBS_DIR, job_id + ".md.src"), encoding="utf-8").read()
+        except OSError:
+            src = None
     # A running job updates via JS polling (see JOB template) rather than a full
     # page refresh, so previewing the partial audio is not interrupted.
     return render(JOB, "sotto - " + job["title"][:40], job=job, id=job_id, pct=pct, slug=slug,
-                  elapsed=elapsed)
+                  elapsed=elapsed, src=src)
 
 
 @app.route("/job/<job_id>/audio")
