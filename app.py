@@ -842,7 +842,7 @@ SHARE_VIEW = """<h1 class=pagetitle>{{heading}}</h1>
 <pre class=src>{{text}}</pre></details>{% endif %}
 <p class=muted style="margin-top:1.4rem">Anyone with this link can listen. It was shared deliberately by its owner, who can revoke it.</p>"""
 
-LOGIN = """<span class=versal>{{versal|safe}}</span><h1>{{wm|safe}}</h1><p class=sub>Reads your documents aloud, in your own voice.</p>
+LOGIN = """<span class=versal>{{versal|safe}}</span><h1>{{wm|safe}}</h1><p class=sub>Reads your documents aloud.</p>
 {% if error %}<p style="color:#b00">{{error}}</p>{% endif %}
 <form method=post action="/login{{nextq}}">
 <input type=hidden name=_csrf value="{{csrf}}">
