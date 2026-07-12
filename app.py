@@ -706,7 +706,7 @@ JOB = """<h1><a href="/">{{wm|safe}}</a></h1>
 <div id=preview style="display:{% if job.get('done',0) %}block{% else %}none{% endif %};margin-top:1.1rem">
 <p class=muted style="margin:0 0 .2rem"><span id=pvmsg>Loading a preview of the oration so far...</span></p>
 <audio id=pv controls preload=none></audio>
-<div class=skiprow><button type=button onclick="loadpv()">Load latest</button><button type=button onclick="lskip('pv',-15)">&laquo; 15s</button><button type=button onclick="lskip('pv',15)">15s &raquo;</button></div>
+<div class=skiprow><button type=button onclick="loadpv(!document.getElementById('pv').paused)">Load latest</button><button type=button onclick="lskip('pv',-15)">&laquo; 15s</button><button type=button onclick="lskip('pv',15)">15s &raquo;</button></div>
 </div>
 {% if job.get('cancel') %}<p class=muted>Stopping after the current chunk...</p>
 {% else %}<form method=post action="/job/{{id}}/stop"><input type=hidden name=_csrf value="{{csrf}}"><button class=linkbtn type=submit>Stop narrating</button></form>{% endif %}
@@ -715,23 +715,27 @@ var JID="{{id}}",PK="lpos-"+JID;
 function pvmsg(t){var m=document.getElementById('pvmsg');if(m)m.textContent=t;}
 function spos(a){try{sessionStorage.setItem(PK,JSON.stringify({t:a.currentTime||0,p:!a.paused}))}catch(e){}}
 function gpos(){try{return JSON.parse(sessionStorage.getItem(PK))}catch(e){return null}}
-function loadpv(){var a=document.getElementById('pv');var t=a.currentTime||0;
+function loadpv(auto){var a=document.getElementById('pv');var t=a.currentTime||0;
  if(!t){var s=gpos();if(s)t=s.t||0;}   // restore position across a page refresh
  pvmsg("Loading a preview of the oration so far...");
  a.src="/job/"+JID+"/audio?n="+Date.now();a.load();
- a.addEventListener('loadedmetadata',function h(){try{a.currentTime=t;}catch(e){}pvmsg("Preview of the oration so far:");a.removeEventListener('loadedmetadata',h);});
+ a.addEventListener('loadedmetadata',function h(){try{a.currentTime=t;}catch(e){}pvmsg("Preview of the oration so far:");
+  if(auto){a.play().then(function(){pvmsg("Playing the oration as it comes in:");}).catch(function(){pvmsg("Preview of the oration so far (tap play):");});}
+  a.removeEventListener('loadedmetadata',h);});
  a.addEventListener('error',function h(){pvmsg("Preview will be ready shortly...");a.removeEventListener('error',h);});}
 (function(){var pv=document.getElementById('preview');var a=document.getElementById('pv');var primed=false;
 ['timeupdate','pause','play'].forEach(function(ev){a.addEventListener(ev,function(){spos(a);});});
 var s=gpos();
-if(pv&&pv.style.display!=="none"){primed=true;loadpv();
- if(s&&s.p){a.addEventListener('loadedmetadata',function h(){a.play().catch(function(){});a.removeEventListener('loadedmetadata',h);});}}
+// Auto-play the first partial as narration starts coming in - unless the user
+// had explicitly paused an earlier load on this page.
+var auto=!(s&&s.p===false);
+if(pv&&pv.style.display!=="none"){primed=true;loadpv(auto);}
 function poll(){fetch("/job/"+JID+"/status",{cache:"no-store"}).then(function(r){return r.json();}).then(function(d){
  if(d.status!=="running"&&d.status!=="queued"){spos(a);location.reload();return;}
  document.getElementById('prog').textContent=d.done+" / "+(d.total||"?");
  document.getElementById('bar').style.width=d.pct+"%";
  if(d.elapsed){var e=document.getElementById('el');if(e)e.textContent=d.elapsed;}
- if(d.done>0){pv.style.display="block";if(!primed){primed=true;loadpv();}}
+ if(d.done>0){pv.style.display="block";if(!primed){primed=true;loadpv(auto);}}
  setTimeout(poll,4000);
 }).catch(function(){setTimeout(poll,6000);});}
 setTimeout(poll,4000);})();
