@@ -1285,24 +1285,26 @@ def library():
     lib = user_lib(current_user())
     shares = _user_shares(current_user())
     items = []
-    for n in sorted(os.listdir(lib)):
-        if n.endswith((".mp3", ".m4a", ".aac")):
-            mb = os.path.getsize(os.path.join(lib, n)) / 1048576
-            dur = audio_duration(os.path.join(lib, n))
-            title = lib_title(lib, n)
-            text = None
-            tp = os.path.join(lib, n[:-4] + ".md")
-            if os.path.isfile(tp):
-                try:
-                    text = open(tp, encoding="utf-8", errors="replace").read()
-                except Exception:
-                    text = None
-            sh = shares.get(n)
-            items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
-                          "length": fmt_duration(dur) if dur else None,
-                          "text": text, "text_name": (n[:-4] + ".md") if text is not None else None,
-                          "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
-                          "share_text": sh["text"] if sh else False})
+    # Most recent first (by the audio file's mtime - saved/uploaded time).
+    names = [n for n in os.listdir(lib) if n.endswith((".mp3", ".m4a", ".aac"))]
+    names.sort(key=lambda n: os.path.getmtime(os.path.join(lib, n)), reverse=True)
+    for n in names:
+        mb = os.path.getsize(os.path.join(lib, n)) / 1048576
+        dur = audio_duration(os.path.join(lib, n))
+        title = lib_title(lib, n)
+        text = None
+        tp = os.path.join(lib, n[:-4] + ".md")
+        if os.path.isfile(tp):
+            try:
+                text = open(tp, encoding="utf-8", errors="replace").read()
+            except Exception:
+                text = None
+        sh = shares.get(n)
+        items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
+                      "length": fmt_duration(dur) if dur else None,
+                      "text": text, "text_name": (n[:-4] + ".md") if text is not None else None,
+                      "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
+                      "share_text": sh["text"] if sh else False})
     # In-progress orations: this user's jobs still being synthesized.
     active = []
     for jid, j in JOBS.items():
