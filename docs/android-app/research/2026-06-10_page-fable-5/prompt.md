@@ -1,0 +1,1 @@
+brainstorm an android app version of lector

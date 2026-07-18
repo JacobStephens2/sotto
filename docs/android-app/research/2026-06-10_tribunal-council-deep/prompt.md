@@ -1,0 +1,1 @@
+How should I turn https://github.com/JacobStephens2/lector into an Android app?
