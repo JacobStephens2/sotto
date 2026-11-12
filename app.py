@@ -738,7 +738,7 @@ h1 .diminuendo,h1 span{vertical-align:baseline}
 }
 </style></head><body>
 <nav>{% if user %}<a class=brand href="/">sotto</a><a href="/library">library</a><span class=sp></span>
-<span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
+<span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<form method=post action="/logout" style="display:inline;margin:0"><input type=hidden name=_csrf value="{{csrf}}"><button type=submit class=linkbtn style="font-size:.9rem;font-weight:400">log out</button></form>
 {% else %}<span class=brand>sotto</span>{% endif %}</nav>
 {{body|safe}}
 <footer>sotto reads documents aloud - it never emails, posts, or acts on your behalf; the only
@@ -1017,7 +1017,8 @@ def render(body_tpl, title, **ctx):
     model = OPENAI_MODEL if provider == "openai" else KOKORO_MODEL_LABEL
     common = dict(provider=provider, may_openai=may_use_openai(u), user=u, admin=is_admin())
     body = render_template_string(body_tpl, csrf=session.get("csrf", ""), **common, **ctx)
-    return render_template_string(PAGE, title=title, model=model, body=body, **common)
+    return render_template_string(PAGE, title=title, model=model, body=body,
+                                  csrf=session.get("csrf", ""), **common)
 
 
 # --------------------------------------------------------------------------- gate
@@ -1070,16 +1071,22 @@ def login():
                                   provider=prov, may_openai=False, user=None, admin=False)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
-    user = current_user()
-    if user:
-        with USER_LOCK:
-            users = load_users()
-            info = users.get(user)
-            if info is not None:
-                bump_session_generation(info, user)
-                save_users(users)
+    # Advancing the generation signs out every browser for the account.
+    # SameSite=Lax still sends the session cookie on a top-level cross-site
+    # GET, and the CSRF check applies only to POST, so only a POST may advance
+    # it. A GET clears the cookie that followed the link and leaves every
+    # other session signed in.
+    if request.method == "POST":
+        user = current_user()
+        if user:
+            with USER_LOCK:
+                users = load_users()
+                info = users.get(user)
+                if info is not None:
+                    bump_session_generation(info, user)
+                    save_users(users)
     session.clear()
     return redirect(url_for("login"))
 

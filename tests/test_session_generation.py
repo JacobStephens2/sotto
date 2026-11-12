@@ -60,6 +60,13 @@ class SessionGenerationTests(unittest.TestCase):
             follow_redirects=False,
         )
 
+    def log_out(self, client):
+        return client.post(
+            "/logout",
+            data={"_csrf": self.csrf_of(client)},
+            follow_redirects=False,
+        )
+
     def account(self, client):
         return client.get("/account", follow_redirects=False)
 
@@ -94,6 +101,29 @@ class SessionGenerationTests(unittest.TestCase):
         self.assertEqual(rejected.status_code, 302)
         self.assertTrue(rejected.headers["Location"].startswith("/login"))
 
+    def test_a_cross_site_get_logout_does_not_sign_out_other_sessions(self):
+        # SameSite=Lax still attaches the session cookie to a top-level
+        # cross-site GET. That request must not advance the account generation.
+        self.write_user("ada@example.com", "correct-horse")
+        ada = self.client()
+        other = self.client()
+        self.sign_in(ada, "ada@example.com", "correct-horse")
+        self.sign_in(other, "ada@example.com", "correct-horse")
+        crossed = ada.get(
+            "/logout",
+            headers={
+                "Sec-Fetch-Site": "cross-site",
+                "Sec-Fetch-Mode": "navigate",
+                "Sec-Fetch-Dest": "document",
+            },
+            follow_redirects=False,
+        )
+        self.assertEqual(crossed.status_code, 302)
+        self.assertEqual(self.account(other).status_code, 200)
+        self.assertEqual(
+            sotto.load_users()["ada@example.com"].get("session_generation", 0), 0
+        )
+
     def test_log_out_signs_out_every_session_for_that_account(self):
         self.write_user("ada@example.com", "correct-horse")
         self.write_user("bea@example.com", "correct-horse")
@@ -103,7 +133,12 @@ class SessionGenerationTests(unittest.TestCase):
         self.sign_in(ada, "ada@example.com", "correct-horse")
         self.sign_in(other, "ada@example.com", "correct-horse")
         self.sign_in(bea, "bea@example.com", "correct-horse")
-        self.assertEqual(ada.get("/logout", follow_redirects=False).status_code, 302)
+        home = ada.get("/", follow_redirects=False)
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b'method=post action="/logout"', home.data)
+        self.assertIn(self.csrf_of(ada).encode(), home.data)
+        self.assertNotIn(b'href="/logout"', home.data)
+        self.assertEqual(self.log_out(ada).status_code, 302)
         self.assertEqual(self.account(ada).status_code, 302)
         self.assertEqual(self.account(other).status_code, 302)
         self.assertEqual(self.account(bea).status_code, 200)
@@ -254,7 +289,7 @@ class SessionGenerationTests(unittest.TestCase):
         self.assertEqual(self.api_me(token).status_code, 200)
         web = self.client()
         self.sign_in(web, "ada@example.com", "correct-horse")
-        self.assertEqual(web.get("/logout", follow_redirects=False).status_code, 302)
+        self.assertEqual(self.log_out(web).status_code, 302)
         self.assertEqual(self.api_me(token).status_code, 200)
         self.sign_in(web, "ada@example.com", "correct-horse")
         changed = self.change_password(web, "correct-horse", "new-password-1")
@@ -290,7 +325,7 @@ class SessionGenerationTests(unittest.TestCase):
         stale = self.client()
         self.sign_in(ada, "ada@example.com", "correct-horse")
         self.sign_in(stale, "ada@example.com", "correct-horse")
-        self.assertEqual(ada.get("/logout", follow_redirects=False).status_code, 302)
+        self.assertEqual(self.log_out(ada).status_code, 302)
         rejected = stale.get("/", follow_redirects=False)
         self.assertEqual(rejected.status_code, 302)
         self.assertTrue(rejected.headers["Location"].startswith("/login"))
@@ -325,7 +360,7 @@ class SessionGenerationTests(unittest.TestCase):
         self.write_user("admin@example.com", "admin-password-1", admin=True)
         first = self.client()
         self.sign_in(first, "ada@example.com", "correct-horse")
-        self.assertEqual(first.get("/logout", follow_redirects=False).status_code, 302)
+        self.assertEqual(self.log_out(first).status_code, 302)
         admin = self.client()
         self.sign_in(admin, "admin@example.com", "admin-password-1")
         deleted = admin.post(
