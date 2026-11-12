@@ -112,11 +112,27 @@ def remove_job_files(job_id):
 
 
 # ----------------------------------------------------------------------- accounts
-def load_users():
+def load_users_file():
+    """Return (accounts, readable). A missing file is an empty readable list.
+
+    Any other read or parse failure is not readable, so a sign-in session
+    cannot be checked against the account's generation.
+    """
     try:
-        return json.load(open(USERS_PATH))
+        with open(USERS_PATH) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}, True
     except Exception:
-        return {}
+        return {}, False
+    if not isinstance(data, dict):
+        return {}, False
+    return data, True
+
+
+def load_users():
+    users, readable = load_users_file()
+    return users if readable else {}
 
 
 def save_users(users):
@@ -189,8 +205,96 @@ def pop_token(tok):
     return e if e and e.get("exp", 0) > time.time() else None
 
 
+# A sign-in session carries the account's session generation and is signed in
+# only while those match. Logging out, saving a password from a reset or invite
+# link, and changing the account password advance the account's generation.
+# An account with no generation yet is at the starting generation. API tokens
+# and account deletion do not use it.
+STARTING_SESSION_GENERATION = 0
+
+
+def account_session_generation(info):
+    """The generation a sign-in session must carry for this account.
+
+    An account with no generation yet is at the starting generation.
+    """
+    return info.get("session_generation", STARTING_SESSION_GENERATION)
+
+
+def session_generations_path():
+    return os.path.join(os.path.dirname(USERS_PATH), "session_generations.json")
+
+
+def remembered_session_generation(email):
+    """Generation last advanced for an account, kept after its record is removed.
+
+    An account that has never advanced is at the starting generation. An
+    unreadable memory matches nothing.
+    """
+    try:
+        with open(session_generations_path()) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return STARTING_SESSION_GENERATION
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if email not in data:
+        return STARTING_SESSION_GENERATION
+    gen = data[email]
+    if isinstance(gen, bool) or not isinstance(gen, int):
+        return None
+    return gen
+
+
+def remember_session_generation(email, gen):
+    """Remember a generation apart from the account record. Caller holds USER_LOCK."""
+    path = session_generations_path()
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[email] = gen
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def bump_session_generation(info, email):
+    """Advance an account record's session generation in place.
+
+    The new generation is remembered outside the account record so deleting
+    the account cannot make an older session match again.
+    """
+    gen = account_session_generation(info) + 1
+    info["session_generation"] = gen
+    remember_session_generation(email, gen)
+    return gen
+
+
 def current_user():
-    return session.get("user")
+    user = session.get("user")
+    if not user:
+        return None
+    users, readable = load_users_file()
+    if not readable:
+        return None
+    info = users.get(user)
+    if info is None:
+        # Deletion removes the record and does not itself change generation.
+        # A session stays signed in only while it carries the generation the
+        # account had reached, which is the start when it was never advanced.
+        if session.get("session_generation") != remembered_session_generation(user):
+            return None
+        return user
+    if session.get("session_generation") != account_session_generation(info):
+        return None
+    return user
 
 
 def is_admin():
@@ -634,7 +738,7 @@ h1 .diminuendo,h1 span{vertical-align:baseline}
 }
 </style></head><body>
 <nav>{% if user %}<a class=brand href="/">sotto</a><a href="/library">library</a><span class=sp></span>
-<span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<a href="/logout">log out</a>
+<span class=who>{{user}}</span><a href="/account">account</a>{% if admin %}<a href="/admin">admin</a>{% endif %}<form method=post action="/logout" style="display:inline;margin:0"><input type=hidden name=_csrf value="{{csrf}}"><button type=submit class=linkbtn style="font-size:.9rem;font-weight:400">log out</button></form>
 {% else %}<span class=brand>sotto</span>{% endif %}</nav>
 {{body|safe}}
 <footer>sotto reads documents aloud - it never emails, posts, or acts on your behalf; the only
@@ -913,7 +1017,8 @@ def render(body_tpl, title, **ctx):
     model = OPENAI_MODEL if provider == "openai" else KOKORO_MODEL_LABEL
     common = dict(provider=provider, may_openai=may_use_openai(u), user=u, admin=is_admin())
     body = render_template_string(body_tpl, csrf=session.get("csrf", ""), **common, **ctx)
-    return render_template_string(PAGE, title=title, model=model, body=body, **common)
+    return render_template_string(PAGE, title=title, model=model, body=body,
+                                  csrf=session.get("csrf", ""), **common)
 
 
 # --------------------------------------------------------------------------- gate
@@ -952,6 +1057,7 @@ def login():
         if info and check_password_hash(info["pw"], request.form.get("password") or ""):
             session.permanent = True
             session["user"] = u
+            session["session_generation"] = account_session_generation(info)
             session["csrf"] = secrets.token_urlsafe(16)
             log(u, "-", "login", request.headers.get("X-Forwarded-For", "-"))
             return redirect(nxt if nxt.startswith("/") else "/")
@@ -965,8 +1071,22 @@ def login():
                                   provider=prov, may_openai=False, user=None, admin=False)
 
 
-@app.route("/logout")
+@app.route("/logout", methods=["GET", "POST"])
 def logout():
+    # Advancing the generation signs out every browser for the account.
+    # SameSite=Lax still sends the session cookie on a top-level cross-site
+    # GET, and the CSRF check applies only to POST, so only a POST may advance
+    # it. A GET clears the cookie that followed the link and leaves every
+    # other session signed in.
+    if request.method == "POST":
+        user = current_user()
+        if user:
+            with USER_LOCK:
+                users = load_users()
+                info = users.get(user)
+                if info is not None:
+                    bump_session_generation(info, user)
+                    save_users(users)
     session.clear()
     return redirect(url_for("login"))
 
@@ -1004,7 +1124,9 @@ def reset(token):
         with USER_LOCK:
             users = load_users()
             if entry["email"] in users:
-                users[entry["email"]]["pw"] = generate_password_hash(new)
+                info = users[entry["email"]]
+                info["pw"] = generate_password_hash(new)
+                bump_session_generation(info, entry["email"])
                 save_users(users)
         log(entry["email"], "-", "password-set", entry["kind"])
         return render(RESET_DONE, "sotto - done")
@@ -1022,11 +1144,15 @@ def account():
         elif len(request.form.get("new") or "") < 8:
             error = "New password must be at least 8 characters."
         else:
+            email = current_user()
             with USER_LOCK:
                 users = load_users()
-                users[current_user()]["pw"] = generate_password_hash(request.form["new"])
+                info = users[email]
+                info["pw"] = generate_password_hash(request.form["new"])
+                new_gen = bump_session_generation(info, email)
                 save_users(users)
-            log(current_user(), "-", "password-change", "")
+            session["session_generation"] = new_gen
+            log(email, "-", "password-change", "")
             msg = "Password changed."
     mine = [dict(hash=h, **t) for h, t in _load_api_tokens().items() if t.get("email") == current_user()]
     mine.sort(key=lambda t: t.get("created", ""), reverse=True)
@@ -1070,6 +1196,7 @@ def admin_add():
                         "admin": bool(request.form.get("admin")),
                         "created": datetime.date.today().isoformat()}
             save_users(users)
+            remember_session_generation(u, STARTING_SESSION_GENERATION)
         user_lib(u)
         link = f"{BASE_URL}/reset/{new_token(u, 'invite', 7 * 24 * 3600)}"
         ok = send_email(u, "You've been invited to sotto",
