@@ -114,7 +114,8 @@ def remove_job_files(job_id):
 # ----------------------------------------------------------------------- accounts
 def load_users():
     try:
-        return json.load(open(USERS_PATH))
+        with open(USERS_PATH) as f:
+            return json.load(f)
     except Exception:
         return {}
 
@@ -189,8 +190,40 @@ def pop_token(tok):
     return e if e and e.get("exp", 0) > time.time() else None
 
 
+# A sign-in session carries the account's session generation and is signed in
+# only while those match. Logging out, saving a password from a reset or invite
+# link, and changing the account password advance the account's generation.
+# An account with no generation yet is at the starting generation. API tokens
+# and account deletion do not use it.
+STARTING_SESSION_GENERATION = 0
+
+
+def account_session_generation(info):
+    """The generation a sign-in session must carry for this account.
+
+    An account with no generation yet is at the starting generation.
+    """
+    return info.get("session_generation", STARTING_SESSION_GENERATION)
+
+
+def bump_session_generation(info):
+    """Advance an account record's session generation in place."""
+    gen = account_session_generation(info) + 1
+    info["session_generation"] = gen
+    return gen
+
+
 def current_user():
-    return session.get("user")
+    user = session.get("user")
+    if not user:
+        return None
+    info = load_users().get(user)
+    # Deleting an account removes its record and does not consult generation.
+    if info is None:
+        return user
+    if session.get("session_generation") != account_session_generation(info):
+        return None
+    return user
 
 
 def is_admin():
@@ -952,6 +985,7 @@ def login():
         if info and check_password_hash(info["pw"], request.form.get("password") or ""):
             session.permanent = True
             session["user"] = u
+            session["session_generation"] = account_session_generation(info)
             session["csrf"] = secrets.token_urlsafe(16)
             log(u, "-", "login", request.headers.get("X-Forwarded-For", "-"))
             return redirect(nxt if nxt.startswith("/") else "/")
@@ -967,6 +1001,14 @@ def login():
 
 @app.route("/logout")
 def logout():
+    user = current_user()
+    if user:
+        with USER_LOCK:
+            users = load_users()
+            info = users.get(user)
+            if info is not None:
+                bump_session_generation(info)
+                save_users(users)
     session.clear()
     return redirect(url_for("login"))
 
@@ -1004,7 +1046,9 @@ def reset(token):
         with USER_LOCK:
             users = load_users()
             if entry["email"] in users:
-                users[entry["email"]]["pw"] = generate_password_hash(new)
+                info = users[entry["email"]]
+                info["pw"] = generate_password_hash(new)
+                bump_session_generation(info)
                 save_users(users)
         log(entry["email"], "-", "password-set", entry["kind"])
         return render(RESET_DONE, "sotto - done")
@@ -1022,11 +1066,15 @@ def account():
         elif len(request.form.get("new") or "") < 8:
             error = "New password must be at least 8 characters."
         else:
+            email = current_user()
             with USER_LOCK:
                 users = load_users()
-                users[current_user()]["pw"] = generate_password_hash(request.form["new"])
+                info = users[email]
+                info["pw"] = generate_password_hash(request.form["new"])
+                new_gen = bump_session_generation(info)
                 save_users(users)
-            log(current_user(), "-", "password-change", "")
+            session["session_generation"] = new_gen
+            log(email, "-", "password-change", "")
             msg = "Password changed."
     mine = [dict(hash=h, **t) for h, t in _load_api_tokens().items() if t.get("email") == current_user()]
     mine.sort(key=lambda t: t.get("created", ""), reverse=True)
