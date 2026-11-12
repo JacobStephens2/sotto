@@ -112,12 +112,27 @@ def remove_job_files(job_id):
 
 
 # ----------------------------------------------------------------------- accounts
-def load_users():
+def load_users_file():
+    """Return (accounts, readable). A missing file is an empty readable list.
+
+    Any other read or parse failure is not readable, so a sign-in session
+    cannot be checked against the account's generation.
+    """
     try:
         with open(USERS_PATH) as f:
-            return json.load(f)
+            data = json.load(f)
+    except FileNotFoundError:
+        return {}, True
     except Exception:
-        return {}
+        return {}, False
+    if not isinstance(data, dict):
+        return {}, False
+    return data, True
+
+
+def load_users():
+    users, readable = load_users_file()
+    return users if readable else {}
 
 
 def save_users(users):
@@ -206,10 +221,59 @@ def account_session_generation(info):
     return info.get("session_generation", STARTING_SESSION_GENERATION)
 
 
-def bump_session_generation(info):
-    """Advance an account record's session generation in place."""
+def session_generations_path():
+    return os.path.join(os.path.dirname(USERS_PATH), "session_generations.json")
+
+
+def remembered_session_generation(email):
+    """Generation last advanced for an account, kept after its record is removed.
+
+    An account that has never advanced is at the starting generation. An
+    unreadable memory matches nothing.
+    """
+    try:
+        with open(session_generations_path()) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        return STARTING_SESSION_GENERATION
+    except Exception:
+        return None
+    if not isinstance(data, dict):
+        return None
+    if email not in data:
+        return STARTING_SESSION_GENERATION
+    gen = data[email]
+    if isinstance(gen, bool) or not isinstance(gen, int):
+        return None
+    return gen
+
+
+def remember_session_generation(email, gen):
+    """Remember a generation apart from the account record. Caller holds USER_LOCK."""
+    path = session_generations_path()
+    try:
+        with open(path) as f:
+            data = json.load(f)
+    except FileNotFoundError:
+        data = {}
+    if not isinstance(data, dict):
+        data = {}
+    data[email] = gen
+    tmp = path + ".tmp"
+    with open(tmp, "w") as f:
+        json.dump(data, f)
+    os.replace(tmp, path)
+
+
+def bump_session_generation(info, email):
+    """Advance an account record's session generation in place.
+
+    The new generation is remembered outside the account record so deleting
+    the account cannot make an older session match again.
+    """
     gen = account_session_generation(info) + 1
     info["session_generation"] = gen
+    remember_session_generation(email, gen)
     return gen
 
 
@@ -217,9 +281,16 @@ def current_user():
     user = session.get("user")
     if not user:
         return None
-    info = load_users().get(user)
-    # Deleting an account removes its record and does not consult generation.
+    users, readable = load_users_file()
+    if not readable:
+        return None
+    info = users.get(user)
     if info is None:
+        # Deletion removes the record and does not itself change generation.
+        # A session stays signed in only while it carries the generation the
+        # account had reached, which is the start when it was never advanced.
+        if session.get("session_generation") != remembered_session_generation(user):
+            return None
         return user
     if session.get("session_generation") != account_session_generation(info):
         return None
@@ -1007,7 +1078,7 @@ def logout():
             users = load_users()
             info = users.get(user)
             if info is not None:
-                bump_session_generation(info)
+                bump_session_generation(info, user)
                 save_users(users)
     session.clear()
     return redirect(url_for("login"))
@@ -1048,7 +1119,7 @@ def reset(token):
             if entry["email"] in users:
                 info = users[entry["email"]]
                 info["pw"] = generate_password_hash(new)
-                bump_session_generation(info)
+                bump_session_generation(info, entry["email"])
                 save_users(users)
         log(entry["email"], "-", "password-set", entry["kind"])
         return render(RESET_DONE, "sotto - done")
@@ -1071,7 +1142,7 @@ def account():
                 users = load_users()
                 info = users[email]
                 info["pw"] = generate_password_hash(request.form["new"])
-                new_gen = bump_session_generation(info)
+                new_gen = bump_session_generation(info, email)
                 save_users(users)
             session["session_generation"] = new_gen
             log(email, "-", "password-change", "")
@@ -1118,6 +1189,7 @@ def admin_add():
                         "admin": bool(request.form.get("admin")),
                         "created": datetime.date.today().isoformat()}
             save_users(users)
+            remember_session_generation(u, STARTING_SESSION_GENERATION)
         user_lib(u)
         link = f"{BASE_URL}/reset/{new_token(u, 'invite', 7 * 24 * 3600)}"
         ok = send_email(u, "You've been invited to sotto",

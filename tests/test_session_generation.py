@@ -283,6 +283,77 @@ class SessionGenerationTests(unittest.TestCase):
         self.assertEqual(self.api_me(token).status_code, 200)
         self.assertEqual(admin.get("/admin", follow_redirects=False).status_code, 200)
 
+    def test_deleting_an_account_must_not_revive_a_session_logout_already_rejected(self):
+        self.write_user("ada@example.com", "correct-horse")
+        self.write_user("admin@example.com", "admin-password-1", admin=True)
+        ada = self.client()
+        stale = self.client()
+        self.sign_in(ada, "ada@example.com", "correct-horse")
+        self.sign_in(stale, "ada@example.com", "correct-horse")
+        self.assertEqual(ada.get("/logout", follow_redirects=False).status_code, 302)
+        rejected = stale.get("/", follow_redirects=False)
+        self.assertEqual(rejected.status_code, 302)
+        self.assertTrue(rejected.headers["Location"].startswith("/login"))
+        admin = self.client()
+        self.sign_in(admin, "admin@example.com", "admin-password-1")
+        deleted = admin.post(
+            "/admin/delete",
+            data={"username": "ada@example.com", "_csrf": self.csrf_of(admin)},
+            follow_redirects=False,
+        )
+        self.assertEqual(deleted.status_code, 200)
+        revived = stale.get("/", follow_redirects=False)
+        self.assertNotEqual(revived.status_code, 200)
+        self.assertNotIn(b"log out", revived.data)
+
+    def test_unreadable_users_file_must_not_accept_a_mismatched_generation(self):
+        self.write_user("ada@example.com", "correct-horse", session_generation=4)
+        client = self.client()
+        with client.session_transaction() as sess:
+            sess["user"] = "ada@example.com"
+            sess["session_generation"] = 1
+        rejected = self.account(client)
+        self.assertEqual(rejected.status_code, 302)
+        with open(sotto.USERS_PATH, "w") as f:
+            f.write("{not-json")
+        revived = self.account(client)
+        self.assertNotEqual(revived.status_code, 200)
+        self.assertNotIn(b"log out", revived.data)
+
+    def test_recreating_an_account_returns_it_to_the_starting_generation(self):
+        self.write_user("ada@example.com", "correct-horse")
+        self.write_user("admin@example.com", "admin-password-1", admin=True)
+        first = self.client()
+        self.sign_in(first, "ada@example.com", "correct-horse")
+        self.assertEqual(first.get("/logout", follow_redirects=False).status_code, 302)
+        admin = self.client()
+        self.sign_in(admin, "admin@example.com", "admin-password-1")
+        deleted = admin.post(
+            "/admin/delete",
+            data={"username": "ada@example.com", "_csrf": self.csrf_of(admin)},
+            follow_redirects=False,
+        )
+        self.assertIn(b"Deleted account", deleted.data)
+        created = admin.post(
+            "/admin/add",
+            data={"username": "ada@example.com", "_csrf": self.csrf_of(admin)},
+            follow_redirects=False,
+        )
+        self.assertIn(b"Created ada@example.com", created.data)
+        self.write_user("ada@example.com", "correct-horse")
+        ada = self.client()
+        self.sign_in(ada, "ada@example.com", "correct-horse")
+        with ada.session_transaction() as sess:
+            self.assertEqual(sess.get("session_generation"), 0)
+        admin.post(
+            "/admin/delete",
+            data={"username": "ada@example.com", "_csrf": self.csrf_of(admin)},
+            follow_redirects=False,
+        )
+        home = ada.get("/", follow_redirects=False)
+        self.assertEqual(home.status_code, 200)
+        self.assertIn(b"log out", home.data)
+
 
 if __name__ == "__main__":
     unittest.main()
