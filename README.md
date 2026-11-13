@@ -90,3 +90,19 @@ fallback, SMTP for emailed links) come from a `.env` copied from
 
 The key is the one line in `/etc/lector/lector.env`. Replace the value and
 `sudo systemctl restart lector`. Nothing else references it.
+
+## Tests
+
+With the app dependencies installed (`pip install -r requirements.txt`), run:
+
+```sh
+python3 -m unittest discover -s tests -v
+```
+
+The standard-library unittest suite exercises the Library interface against real
+temporary files and Flask requests against a temporary copy of the application.
+Resume is disabled except when reloading completed jobs to verify persistence;
+tests do not use production state, TTS services or SMTP.
+The application import smoke check also verifies the Dockerfile's copied Python
+sources and the existing `app:app` service entry point. If Docker is available,
+the image can additionally be checked with `docker build -t sotto-library-test .`.
