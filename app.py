@@ -6,12 +6,13 @@ Boundaries (see /about): the OpenAI key lives only in this process's environment
 credentials and signed sessions; every job and account action is logged; the app
 produces audio and nothing else - it never sends, publishes, or posts.
 """
-import functools, hashlib, os, re, io, json, time, uuid, shutil, secrets, smtplib, threading, datetime
+import functools, hashlib, os, re, io, json, time, uuid, secrets, smtplib, threading, datetime
 import urllib.request, urllib.error
 from email.message import EmailMessage
 from flask import (Flask, request, redirect, url_for, send_file, abort, Response,
                    render_template_string, session, jsonify, g)
 from werkzeug.security import generate_password_hash, check_password_hash
+from library_store import Library
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS_DIR = os.path.join(APP_DIR, "jobs")
@@ -124,12 +125,6 @@ def save_users(users):
     with open(tmp, "w") as f:
         json.dump(users, f, indent=2)
     os.replace(tmp, USERS_PATH)
-
-
-def user_lib(name):
-    d = os.path.join(LIBRARY_DIR, name)
-    os.makedirs(d, exist_ok=True)
-    return d
 
 
 def send_email(to, subject, html):
@@ -370,41 +365,12 @@ def save_to_library(job, owner, job_id):
     """Copy a finished job's audio (and source text) into the owner's Library."""
     if job.get("saved") or not os.path.isfile(job.get("file", "")):
         return job.get("saved")
-    slug = re.sub(r"[^a-z0-9]+", "-", job["title"].lower()).strip("-")[:60] or "narration"
-    lib = user_lib(owner)
-    name = slug + ".mp3"
-    if os.path.exists(os.path.join(lib, name)):
-        name = f"{slug}-{job_id[:6]}.mp3"
-    shutil.copy2(job["file"], os.path.join(lib, name))
-    src = job.get("md", "")
-    if src:
-        with open(os.path.join(lib, name[:-4] + ".md"), "w", encoding="utf-8") as f:
-            f.write(src)
-    # Keep the exact display name beside the audio so the Library shows it verbatim
-    # (the filename is a lossy lowercased slug).
-    with open(os.path.join(lib, name[:-4] + ".title"), "w", encoding="utf-8") as f:
-        f.write(job.get("title", ""))
-    # And how it was made, for the entry's detail page.
-    with open(os.path.join(lib, name[:-4] + ".meta"), "w") as f:
-        json.dump({"secs": job.get("secs"), "words": job.get("words"),
-                   "voice": job.get("voice")}, f)
+    name = Library(LIBRARY_DIR, owner).save_narration(
+        job["file"], title=job["title"], source=job.get("md", ""),
+        metadata={key: job.get(key) for key in ("secs", "words", "voice")}, job_id=job_id)
     job["saved"] = name
     log(owner, job["title"], "saved", name)
     return name
-
-
-def lib_title(lib_dir, name):
-    """Display title for a library item: the saved .title sidecar if present,
-    otherwise derived from the filename (for entries saved before titles existed)."""
-    tp = os.path.join(lib_dir, name[:-4] + ".title")
-    if os.path.isfile(tp):
-        try:
-            t = open(tp, encoding="utf-8").read().strip()
-            if t:
-                return t
-        except OSError:
-            pass
-    return re.sub(r"[-_]+", " ", name[:-4]).strip().capitalize()
 
 
 AUDIO_EXT_RE = r"\.(mp3|m4a|aac)"
@@ -412,47 +378,6 @@ AUDIO_EXT_RE = r"\.(mp3|m4a|aac)"
 
 def audio_mime(name):
     return {"mp3": "audio/mpeg", "m4a": "audio/mp4", "aac": "audio/aac"}[name.rsplit(".", 1)[1]]
-
-
-def strip_ext(name):
-    return re.sub(AUDIO_EXT_RE + "$", "", name)
-
-
-def audio_duration(path):
-    """Duration in seconds: frame-parsed for mp3; uploaded formats carry it in .meta."""
-    if path.endswith(".mp3"):
-        return mp3_duration(path)
-    try:
-        return json.load(open(strip_ext(path) + ".meta")).get("duration_secs")
-    except Exception:
-        return None
-
-
-def mp3_duration(path):
-    """Approximate MP3 length in seconds from the first frame's bitrate (the
-    output is CBR from both backends, so size/bitrate is accurate)."""
-    try:
-        size = os.path.getsize(path)
-        with open(path, "rb") as f:
-            head = f.read(10)
-            off = 0
-            if head[:3] == b"ID3":
-                off = 10 + (((head[6] & 0x7f) << 21) | ((head[7] & 0x7f) << 14)
-                            | ((head[8] & 0x7f) << 7) | (head[9] & 0x7f))
-            f.seek(off)
-            hdr = f.read(4)
-        if len(hdr) < 4 or hdr[0] != 0xFF or (hdr[1] & 0xE0) != 0xE0:
-            return None
-        mpeg1 = ((hdr[1] >> 3) & 0x3) == 3
-        br_i = (hdr[2] >> 4) & 0xF
-        if br_i in (0, 0xF):
-            return None
-        table = ([0, 32, 40, 48, 56, 64, 80, 96, 112, 128, 160, 192, 224, 256, 320] if mpeg1
-                 else [0, 8, 16, 24, 32, 40, 48, 56, 64, 80, 96, 112, 128, 144, 160])
-        kbps = table[br_i]
-        return int((size - off) * 8 / (kbps * 1000)) if kbps else None
-    except Exception:
-        return None
 
 
 def run_job(job_id, md, voice, title, owner, resume=False):
@@ -1070,7 +995,7 @@ def admin_add():
                         "admin": bool(request.form.get("admin")),
                         "created": datetime.date.today().isoformat()}
             save_users(users)
-        user_lib(u)
+        Library(LIBRARY_DIR, u)
         link = f"{BASE_URL}/reset/{new_token(u, 'invite', 7 * 24 * 3600)}"
         ok = send_email(u, "You've been invited to sotto",
                         "<p>An administrator created a sotto account for you.</p>"
@@ -1107,16 +1032,10 @@ def calibrated_rates(user):
     (whose recorded time undercounts true wall-clock) doesn't skew the estimate."""
     samples = {"kokoro": [], "openai": []}
     try:
-        names = os.listdir(user_lib(user))
+        history = Library(LIBRARY_DIR, user).metadata_history()
     except OSError:
-        names = []
-    for n in names:
-        if not n.endswith(".meta"):
-            continue
-        try:
-            m = json.load(open(os.path.join(user_lib(user), n)))
-        except Exception:
-            continue
+        history = []
+    for m in history:
         secs, words = m.get("secs"), m.get("words")
         if secs and words and words >= 50:   # skip tiny/empty runs
             samples[backend_of_voice(m.get("voice") or "")].append(secs / words)
@@ -1245,9 +1164,7 @@ def job_rename(job_id):
         job["title"] = new
         persist_job(job_id)
         if job.get("saved"):   # already in the library -> keep its display name in step
-            with open(os.path.join(user_lib(job["owner"]), job["saved"][:-4] + ".title"),
-                      "w", encoding="utf-8") as f:
-                f.write(new)
+            Library(LIBRARY_DIR, job["owner"]).set_title(job["saved"], new)
         log(job["owner"], new, "rename", job_id[:8])
     return redirect(url_for("job_page", job_id=job_id))
 
@@ -1286,27 +1203,18 @@ def _user_shares(owner):
 
 @app.route("/library")
 def library():
-    lib = user_lib(current_user())
+    lib = Library(LIBRARY_DIR, current_user())
     shares = _user_shares(current_user())
     items = []
     # Most recent first (by the audio file's mtime - saved/uploaded time).
-    names = [n for n in os.listdir(lib) if n.endswith((".mp3", ".m4a", ".aac"))]
-    names.sort(key=lambda n: os.path.getmtime(os.path.join(lib, n)), reverse=True)
-    for n in names:
-        mb = os.path.getsize(os.path.join(lib, n)) / 1048576
-        dur = audio_duration(os.path.join(lib, n))
-        title = lib_title(lib, n)
-        text = None
-        tp = os.path.join(lib, n[:-4] + ".md")
-        if os.path.isfile(tp):
-            try:
-                text = open(tp, encoding="utf-8", errors="replace").read()
-            except Exception:
-                text = None
-        sh = shares.get(n)
-        items.append({"name": n, "title": title, "size": f"{mb:.1f} MB",
+    for entry in sorted(lib.entries(), key=lambda entry: entry.mtime, reverse=True):
+        mb = entry.size / 1048576
+        dur = entry.duration_secs
+        text = lib.read_source(entry.name)
+        sh = shares.get(entry.name)
+        items.append({"name": entry.name, "title": entry.title, "size": f"{mb:.1f} MB",
                       "length": fmt_duration(dur) if dur else None,
-                      "text": text, "text_name": (n[:-4] + ".md") if text is not None else None,
+                      "text": text, "text_name": entry.source_name if text is not None else None,
                       "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
                       "share_text": sh["text"] if sh else False})
     # In-progress orations: this user's jobs still being synthesized.
@@ -1327,8 +1235,8 @@ def library():
 def library_file(name):
     if not re.fullmatch(r"[A-Za-z0-9._-]+\.(mp3|m4a|aac|md)", name):
         abort(404)
-    path = os.path.join(user_lib(current_user()), name)
-    if not os.path.isfile(path):
+    path = Library(LIBRARY_DIR, current_user()).download_file(name)
+    if path is None:
         abort(404)
     mime = "text/markdown; charset=utf-8" if name.endswith(".md") else audio_mime(name)
     return send_file(path, mimetype=mime, conditional=not app.config["USE_X_SENDFILE"])
@@ -1338,20 +1246,9 @@ def library_file(name):
 def library_rename(name):
     if not re.fullmatch(r"[A-Za-z0-9._-]+" + AUDIO_EXT_RE, name):
         abort(404)
-    lib = user_lib(current_user())
-    if not os.path.isfile(os.path.join(lib, name)):
-        abort(404)
     new = (request.form.get("title") or "").strip()[:120]
-    tp = os.path.join(lib, name[:-4] + ".title")  # only the display title changes; file/URL stay put
-    if new:
-        with open(tp, "w", encoding="utf-8") as f:
-            f.write(new)
-    else:
-        try:
-            os.remove(tp)   # blank -> revert to the filename-derived name
-        except OSError:
-            pass
-    os.utime(os.path.join(lib, name), None)   # bump mtime: renames sync last-write-wins
+    if not Library(LIBRARY_DIR, current_user()).set_title(name, new or None):
+        abort(404)
     log(current_user(), new or name, "rename", name)
     if request.form.get("back") == "view":
         return redirect(url_for("library_entry", name=name))
@@ -1362,30 +1259,20 @@ def library_rename(name):
 def library_entry(name):
     if not re.fullmatch(r"[A-Za-z0-9._-]+" + AUDIO_EXT_RE, name):
         abort(404)
-    lib = user_lib(current_user())
-    path = os.path.join(lib, name)
-    if not os.path.isfile(path):
+    lib = Library(LIBRARY_DIR, current_user())
+    entry = lib.lookup(name)
+    if entry is None:
         abort(404)
-    dur = audio_duration(path)
-    meta = {}
-    try:
-        meta = json.load(open(path[:-4] + ".meta"))
-    except Exception:
-        pass
-    text = None
-    tp = path[:-4] + ".md"
-    if os.path.isfile(tp):
-        try:
-            text = open(tp, encoding="utf-8", errors="replace").read()
-        except Exception:
-            text = None
+    dur = entry.duration_secs
+    meta = entry.metadata
+    text = lib.read_source(name)
     sh = _user_shares(current_user()).get(name)
-    title = lib_title(lib, name)
+    title = entry.title
     return render(ENTRY, "sotto - " + title[:40], name=name, heading=title,
-                  size=f"{os.path.getsize(path) / 1048576:.1f} MB",
+                  size=f"{entry.size / 1048576:.1f} MB",
                   length=fmt_duration(dur) if dur else None,
                   secs=meta.get("secs"), words=meta.get("words"),
-                  text=text, text_name=name[:-4] + ".md",
+                  text=text, text_name=entry.source_name,
                   share_url=(BASE_URL + "/share/" + sh["token"]) if sh else None,
                   share_text=sh["text"] if sh else False)
 
@@ -1398,10 +1285,10 @@ def library_entry(name):
 def library_share(name):
     if not re.fullmatch(r"[A-Za-z0-9._-]+" + AUDIO_EXT_RE, name):
         abort(404)
-    lib = user_lib(current_user())
-    if not os.path.isfile(os.path.join(lib, name)):
+    entry = Library(LIBRARY_DIR, current_user()).lookup(name)
+    if entry is None:
         abort(404)
-    want_text = bool(request.form.get("text")) and os.path.isfile(os.path.join(lib, name[:-4] + ".md"))
+    want_text = bool(request.form.get("text")) and entry.has_text
     with SHARE_LOCK:
         shares = _load_shares()
         tok = next((t for t, s in shares.items()
@@ -1439,7 +1326,7 @@ def _shared(token):
     s = _load_shares().get(token)
     if not s or not re.fullmatch(r"[A-Za-z0-9._-]+" + AUDIO_EXT_RE, s.get("name", "")):
         return None
-    if not os.path.isfile(os.path.join(user_lib(s["owner"]), s["name"])):
+    if Library(LIBRARY_DIR, s["owner"]).audio_file(s["name"]) is None:
         return None
     return s
 
@@ -1450,15 +1337,9 @@ def share(token):
     if not s:
         abort(404)
     name = s["name"]
-    title = lib_title(user_lib(s["owner"]), name)
-    text = None
-    if s.get("text"):
-        tp = os.path.join(user_lib(s["owner"]), name[:-4] + ".md")
-        if os.path.isfile(tp):
-            try:
-                text = open(tp, encoding="utf-8", errors="replace").read()
-            except Exception:
-                text = None
+    lib = Library(LIBRARY_DIR, s["owner"])
+    title = lib.lookup(name).title
+    text = lib.read_source(name) if s.get("text") else None
     return render(SHARE_VIEW, "sotto - " + title[:40], token=token, heading=title,
                   text=text, has_text=text is not None)
 
@@ -1468,7 +1349,7 @@ def share_audio(token):
     s = _shared(token)
     if not s:
         abort(404)
-    return send_file(os.path.join(user_lib(s["owner"]), s["name"]), mimetype=audio_mime(s["name"]),
+    return send_file(Library(LIBRARY_DIR, s["owner"]).audio_file(s["name"]), mimetype=audio_mime(s["name"]),
                      conditional=not app.config["USE_X_SENDFILE"])
 
 
@@ -1477,8 +1358,8 @@ def share_text(token):
     s = _shared(token)
     if not s or not s.get("text"):
         abort(404)
-    path = os.path.join(user_lib(s["owner"]), s["name"][:-4] + ".md")
-    if not os.path.isfile(path):
+    path = Library(LIBRARY_DIR, s["owner"]).source_file(s["name"])
+    if path is None:
         abort(404)
     return send_file(path, mimetype="text/markdown; charset=utf-8",
                      conditional=not app.config["USE_X_SENDFILE"])
@@ -1713,31 +1594,23 @@ def api_job(job_id):
 @app.route("/api/v1/library")
 @require_token
 def api_library():
-    lib = user_lib(g.api_user)
     entries = []
-    for n in sorted(os.listdir(lib)):
-        if not n.endswith((".mp3", ".m4a", ".aac")):
-            continue
-        p = os.path.join(lib, n)
-        meta = {}
-        try:
-            meta = json.load(open(p[:-4] + ".meta"))
-        except Exception:
-            pass
+    for entry in sorted(Library(LIBRARY_DIR, g.api_user).entries(), key=lambda entry: entry.name):
+        meta = entry.metadata
         entries.append({
-            "name": n, "title": lib_title(lib, n),
+            "name": entry.name, "title": entry.title,
             "words": meta.get("words"), "secs": meta.get("secs"),
-            "voice": meta.get("voice"), "size": os.path.getsize(p),
-            "duration_secs": audio_duration(p), "mtime": int(os.path.getmtime(p)),
-            "has_text": os.path.isfile(p[:-4] + ".md")})
+            "voice": meta.get("voice"), "size": entry.size,
+            "duration_secs": entry.duration_secs, "mtime": int(entry.mtime),
+            "has_text": entry.has_text})
     return jsonify({"entries": entries})
 
 
 def _api_entry_path(name):
     if not re.fullmatch(API_NAME_RE, name):
         abort(404)
-    path = os.path.join(user_lib(g.api_user), name)
-    if not os.path.isfile(path):
+    path = Library(LIBRARY_DIR, g.api_user).audio_file(name)
+    if path is None:
         abort(404)
     return path
 
@@ -1752,8 +1625,9 @@ def api_audio(name):
 @app.route("/api/v1/library/<name>/text")
 @require_token
 def api_text(name):
-    tp = _api_entry_path(name)[:-4] + ".md"
-    if not os.path.isfile(tp):
+    _api_entry_path(name)
+    tp = Library(LIBRARY_DIR, g.api_user).source_file(name)
+    if tp is None:
         abort(404)
     return send_file(tp, mimetype="text/markdown; charset=utf-8",
                      conditional=not app.config["USE_X_SENDFILE"])
@@ -1767,39 +1641,30 @@ def api_put(name):
     audio = request.files.get("audio")
     if audio is None:
         return _api_err(400, "validation", "multipart part 'audio' required")
-    lib = user_lib(g.api_user)
-    path = os.path.join(lib, name)
-    existed = os.path.exists(path)
-    if existed and request.headers.get("If-None-Match") == "*":
-        return _api_err(409, "conflict", "entry exists")
-    audio.save(path + ".tmp")
-    os.replace(path + ".tmp", path)
     text = request.files.get("text")
-    if text is not None:
-        text.save(path[:-4] + ".md")
     try:
         meta = json.loads(request.form.get("meta") or "{}")
     except ValueError:
         meta = {}
-    with open(path[:-4] + ".meta", "w") as f:
-        json.dump({k: meta.get(k) for k in ("secs", "words", "voice", "duration_secs")}, f)
-    with open(path[:-4] + ".title", "w", encoding="utf-8") as f:
-        f.write(str(meta.get("title") or "")[:120] or strip_ext(name))
+    try:
+        result = Library(LIBRARY_DIR, g.api_user).upload(
+            name, audio.stream, source=text.stream if text is not None else None, metadata=meta,
+            if_absent=request.headers.get("If-None-Match") == "*")
+    except FileExistsError:
+        return _api_err(409, "conflict", "entry exists")
     log(g.api_user, meta.get("title") or name, "api-upload",
-        f"{name} {os.path.getsize(path)}B {'replaced' if existed else 'created'}")
-    return jsonify({"name": name}), 200 if existed else 201
+        f"{name} {result.size}B {'created' if result.created else 'replaced'}")
+    return jsonify({"name": name}), 201 if result.created else 200
 
 
 @app.route("/api/v1/library/<name>", methods=["PATCH"])
 @require_token
 def api_patch(name):
-    path = _api_entry_path(name)
+    _api_entry_path(name)
     title = ((request.get_json(silent=True) or {}).get("title") or "").strip()[:120]
     if not title:
         return _api_err(400, "validation", "title required")
-    with open(path[:-4] + ".title", "w", encoding="utf-8") as f:
-        f.write(title)
-    os.utime(path, None)   # LWW: renames bump the entry's mtime
+    Library(LIBRARY_DIR, g.api_user).set_title(name, title)
     log(g.api_user, title, "api-rename", name)
     return jsonify({"name": name, "title": title})
 
@@ -1807,7 +1672,7 @@ def api_patch(name):
 @app.route("/api/v1/library/<name>", methods=["DELETE"])
 @require_token
 def api_delete(name):
-    path = _api_entry_path(name)
+    _api_entry_path(name)
     with SHARE_LOCK:   # revoke any share links pointing at it
         shares = _load_shares()
         gone = [t for t, sh in shares.items()
@@ -1816,11 +1681,7 @@ def api_delete(name):
             shares.pop(t, None)
         if gone:
             _save_shares(shares)
-    for ext in ("", ".md", ".title", ".meta"):
-        try:
-            os.remove((path[:-4] + ext) if ext else path)
-        except OSError:
-            pass
+    Library(LIBRARY_DIR, g.api_user).delete(name)
     log(g.api_user, name, "api-delete", f"shares-revoked={len(gone)}")
     return "", 204
 
