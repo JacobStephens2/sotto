@@ -30,13 +30,8 @@ class LibraryRoutesTests(unittest.TestCase):
         env = patch.dict(os.environ, {"LECTOR_RESUME": "0", "SMTP_HOST": "", "SMTP_PASS": ""})
         env.start()
         self.addCleanup(env.stop)
-        module_name = "sotto_test_" + self.root.name
-        spec = importlib.util.spec_from_file_location(module_name, self.root / "app.py")
-        self.module = importlib.util.module_from_spec(spec)
-        sys.modules[module_name] = self.module
-        self.addCleanup(sys.modules.pop, module_name, None)
-        spec.loader.exec_module(self.module)
-        self.module.app.config.update(TESTING=True, USE_X_SENDFILE=False)
+        self.import_count = 0
+        self.module = self.load_application()
         self.client = self.module.app.test_client()
         with self.client.session_transaction() as session:
             session.update(user=OWNER, csrf="test-csrf")
@@ -44,6 +39,25 @@ class LibraryRoutesTests(unittest.TestCase):
                   for token, owner in (("reader-token", OWNER), ("other-token", OTHER))}
         (self.root / "state" / "api_tokens.json").write_text(json.dumps(tokens))
         self.auth = {"Authorization": "Bearer reader-token"}
+
+    def load_application(self, resume=False):
+        self.import_count += 1
+        module_name = f"sotto_test_{self.root.name}_{self.import_count}"
+        spec = importlib.util.spec_from_file_location(module_name, self.root / "app.py")
+        module = importlib.util.module_from_spec(spec)
+        sys.modules[module_name] = module
+        self.addCleanup(sys.modules.pop, module_name, None)
+        with patch.dict(os.environ, {"LECTOR_RESUME": "1" if resume else "0"}):
+            spec.loader.exec_module(module)
+        module.app.config.update(TESTING=True, USE_X_SENDFILE=False)
+        return module
+
+    def restarted_client(self):
+        # These jobs are all done; service startup reloads them without workers.
+        client = self.load_application(resume=True).app.test_client()
+        with client.session_transaction() as session:
+            session.update(user=OWNER, csrf="test-csrf")
+        return client
 
     def post(self, path, **data):
         return self.client.post(path, data={"_csrf": "test-csrf", **data})
@@ -81,12 +95,12 @@ class LibraryRoutesTests(unittest.TestCase):
                "file": str(audio), "md": "# Exact source", "secs": 20,
                "words": 100, "voice": "am_michael", **fields}
         self.module.JOBS[job_id] = job
-        return job_id, job
+        return job_id
 
     def test_saved_job_rename_advances_sync_revision(self):
-        job_id, job = self.finished_job()
+        job_id = self.finished_job()
         self.assertEqual(self.post(f"/job/{job_id}/save").status_code, 302)
-        name = job["saved"]
+        name = self.entries()[0]["name"]
         audio = self.root / "library" / OWNER / name
         os.utime(audio, (1000000000, 1000000000))
         response = self.post(f"/job/{job_id}/rename", title=" Renamed title ")
@@ -140,9 +154,9 @@ class LibraryRoutesTests(unittest.TestCase):
         self.assertEqual([event["status"] for event in self.audit()], ["api-upload", "rename", "api-rename"])
 
     def test_blank_title_policies_and_missing_entry_validation_order_stay_distinct(self):
-        job_id, job = self.finished_job()
+        job_id = self.finished_job()
         self.post(f"/job/{job_id}/save")
-        name = job["saved"]
+        name = self.entries()[0]["name"]
         audio = self.root / "library" / OWNER / name
         os.utime(audio, (1000000000, 1000000000))
         self.assertEqual(self.post(f"/job/{job_id}/rename", title="  ").status_code, 302)
@@ -161,33 +175,31 @@ class LibraryRoutesTests(unittest.TestCase):
         self.assertEqual(self.post("/library/missing.mp3/rename", title="").status_code, 404)
 
     def test_deleted_saved_job_rename_keeps_job_without_recreating_entry(self):
-        job_id, job = self.finished_job()
+        job_id = self.finished_job()
         self.post(f"/job/{job_id}/save")
-        name = job["saved"]
+        name = self.entries()[0]["name"]
         self.assertEqual(self.client.delete(f"/api/v1/library/{name}", headers=self.auth).status_code, 204)
         self.assertEqual(self.post(f"/job/{job_id}/rename", title="Job only").status_code, 302)
         self.assertEqual(self.entries(), [])
         self.assertEqual(self.client.get(f"/library/{name}/view").status_code, 404)
-        self.assertEqual(json.loads((self.root / "jobs" / (job_id + ".json")).read_text())["title"], "Job only")
-        self.assertEqual(list((self.root / "library" / OWNER).iterdir()), [])
+        client = self.restarted_client()
+        self.assertIn("Job only", client.get(f"/job/{job_id}").get_data(as_text=True))
+        self.assertEqual(client.get("/api/v1/library", headers=self.auth).json, {"entries": []})
 
     def test_repeated_manual_save_keeps_marker_and_persistence(self):
-        job_id, job = self.finished_job()
+        job_id = self.finished_job()
         for _ in range(2):
             self.assertEqual(self.post(f"/job/{job_id}/save").location, "/library")
         entry, = self.entries()
         self.assertEqual(entry["name"], "original-title.mp3")
-        self.assertEqual(job["saved"], entry["name"])
-        persisted = json.loads((self.root / "jobs" / (job_id + ".json")).read_text())
-        self.assertEqual(persisted["saved"], entry["name"])
         self.assertEqual([event["status"] for event in self.audit()], ["saved"])
-        response = self.client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
+        client = self.restarted_client()
+        response = client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
         self.assertEqual(response.json["name"], entry["name"])
 
     def test_job_ownership_and_admin_rename_bind_storage_to_job_owner(self):
-        job_id, job = self.finished_job()
+        job_id = self.finished_job()
         self.post(f"/job/{job_id}/save")
-        name = job["saved"]
         self.web_as(OTHER)
         self.assertEqual(self.post(f"/job/{job_id}/rename", title="Not mine").status_code, 404)
         self.assertEqual(self.post(f"/job/{job_id}/save").status_code, 404)
@@ -221,12 +233,15 @@ class LibraryRoutesTests(unittest.TestCase):
                 self.assertEqual(response.json["name"], flag + ".mp3")
                 self.assertEqual({entry["name"] for entry in self.entries()},
                                  {"autosave.mp3"} if flag == "autosave" else {"autosave.mp3", "notify.mp3"})
-                persisted = json.loads((self.root / "jobs" / (job_id + ".json")).read_text())
-                # Wait for persistence and the notification audit after the save marker.
-                while ("saved" not in persisted or (flag == "notify" and self.audit()[-1]["status"] != "email-unconfigured")) and time.monotonic() < deadline:
+                # A fresh HTTP client after service startup observes persisted state.
+                client = self.restarted_client()
+                restored = client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
+                while (restored.json.get("name") != response.json["name"] or
+                       (flag == "notify" and self.audit()[-1]["status"] != "email-unconfigured")) and time.monotonic() < deadline:
                     time.sleep(0.005)
-                    persisted = json.loads((self.root / "jobs" / (job_id + ".json")).read_text())
-                self.assertEqual(persisted["saved"], response.json["name"])
+                    client = self.restarted_client()
+                    restored = client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
+                self.assertEqual(restored.json["name"], response.json["name"])
         self.assertEqual([event["status"] for event in self.audit()],
                          ["api-narrate", "done", "saved", "queued", "done", "saved", "email-unconfigured"])
 

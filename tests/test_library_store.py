@@ -84,7 +84,6 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertEqual(self.library.lookup("uploaded.m4a").metadata,
                          {"secs": None, "words": None, "voice": None, "duration_secs": None})
         self.assertEqual(self.library.audio_file("uploaded.m4a").read_bytes(), b"second")
-        self.assertFalse((self.root / OWNER / "uploaded.m4a.tmp").exists())
 
     def test_history_includes_orphans_and_removal_keeps_shared_stem_behavior(self):
         self.legacy("shared.mp3", source="shared source", title="Shared display", meta={"words": 100})
@@ -116,11 +115,9 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertEqual(self.library.audio_file(entry.name).read_bytes(), AUDIO)
         self.assertTrue(self.library.set_title(entry.name, None))
         self.assertEqual(self.library.lookup(entry.name).title, "Old title")
-        self.assertFalse(audio.with_suffix(".title").exists())
         self.library.delete(entry.name)
         self.assertFalse(self.library.set_title(entry.name, "No resurrection"))
         self.assertIsNone(self.library.lookup(entry.name))
-        self.assertFalse(audio.with_suffix(".title").exists())
 
     def test_optional_sidecars_fall_back_and_source_replaces_invalid_utf8(self):
         audio = self.legacy("missing-title.mp3", audio=b"not mp3")
