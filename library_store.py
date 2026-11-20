@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 import re
 import shutil
+from tempfile import TemporaryDirectory
 
 
 @dataclass(frozen=True)
@@ -155,12 +156,33 @@ class Library:
         if (self._directory / name).exists():
             name = f"{slug}-{job_id[:6]}.mp3"
         path = self._directory / name
-        shutil.copy2(audio, path)
-        if source:
-            _sidecar(path, ".md").write_text(source, encoding="utf-8")
-        _sidecar(path, ".title").write_text(title, encoding="utf-8")
-        with _sidecar(path, ".meta").open("w") as stream:
-            json.dump({key: metadata.get(key) for key in ("secs", "words", "voice")}, stream)
+        with TemporaryDirectory(dir=self._directory) as directory:
+            staged = Path(directory) / name
+            shutil.copy2(audio, staged)
+            if source:
+                _sidecar(staged, ".md").write_text(source, encoding="utf-8")
+            _sidecar(staged, ".title").write_text(title, encoding="utf-8")
+            with _sidecar(staged, ".meta").open("w") as stream:
+                json.dump({key: metadata.get(key) for key in ("secs", "words", "voice")}, stream)
+
+            # The MP3 makes the entry visible. Publish it after all sidecars.
+            new_sidecars = []
+            try:
+                for sidecar in staged.parent.iterdir():
+                    if sidecar != staged:
+                        destination = self._directory / sidecar.name
+                        existed = destination.exists()
+                        sidecar.replace(destination)
+                        if not existed:
+                            new_sidecars.append(destination)
+                staged.replace(path)
+            except OSError:
+                for sidecar in new_sidecars:
+                    try:
+                        sidecar.unlink()
+                    except OSError:
+                        pass
+                raise
         return name
 
     def upload(self, name, audio, *, source=None, metadata=None, if_absent=False):

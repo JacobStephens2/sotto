@@ -6,13 +6,14 @@ Boundaries (see /about): the OpenAI key lives only in this process's environment
 credentials and signed sessions; every job and account action is logged; the app
 produces audio and nothing else - it never sends, publishes, or posts.
 """
-import functools, hashlib, os, re, io, json, time, uuid, secrets, smtplib, threading, datetime
+import functools, hashlib, os, re, io, json, time, secrets, smtplib, threading, datetime
 import urllib.request, urllib.error
 from email.message import EmailMessage
 from flask import (Flask, request, redirect, url_for, send_file, abort, Response,
                    render_template_string, session, jsonify, g)
 from werkzeug.security import generate_password_hash, check_password_hash
 from library_store import Library
+from narration_jobs import NarrationJobs
 
 APP_DIR = os.path.dirname(os.path.abspath(__file__))
 JOBS_DIR = os.path.join(APP_DIR, "jobs")
@@ -23,7 +24,7 @@ FONTS_DIR = os.path.join(APP_DIR, "fonts")
 USERS_PATH = os.path.join(STATE_DIR, "users.json")
 SECRET_PATH = os.path.join(STATE_DIR, "secret.key")
 LOG_PATH = os.path.join(APP_DIR, "lector.log")
-for d in (JOBS_DIR, LIBRARY_DIR, STATE_DIR):
+for d in (LIBRARY_DIR, STATE_DIR):
     os.makedirs(d, exist_ok=True)
 
 CHUNK_LIMIT = 3600          # OpenAI input ceiling per request
@@ -74,42 +75,9 @@ if not os.path.exists(SECRET_PATH):
         f.write(secrets.token_hex(32))
 app.secret_key = open(SECRET_PATH).read().strip()
 
-JOBS = {}
 LOG_LOCK = threading.Lock()
 USER_LOCK = threading.Lock()
 SHARE_LOCK = threading.Lock()
-
-
-# ----------------------------------------------------------------- job persistence
-# Each job mirrors its state to disk so a restart or crash does not lose it:
-#   <id>.json    lightweight state (status, progress, byte offset, ...)
-#   <id>.md.src  the source text, written once
-#   <id>.mp3     the partial/finished audio, fsync'd at each chunk boundary
-# Interrupted (queued/running) jobs resume from the last completed chunk on start.
-PERSIST_KEYS = ("status", "title", "owner", "voice", "limit", "total", "done",
-                "bytes", "words", "notify", "autosave", "created", "secs", "saved", "file", "error")
-
-
-def persist_job(job_id):
-    job = JOBS.get(job_id)
-    if not job:
-        return
-    data = {k: job[k] for k in PERSIST_KEYS if k in job}
-    p = os.path.join(JOBS_DIR, job_id + ".json")
-    try:
-        with open(p + ".tmp", "w") as f:
-            json.dump(data, f)
-        os.replace(p + ".tmp", p)
-    except OSError:
-        pass
-
-
-def remove_job_files(job_id):
-    for ext in (".json", ".md.src", ".mp3"):
-        try:
-            os.remove(os.path.join(JOBS_DIR, job_id + ext))
-        except OSError:
-            pass
 
 
 # ----------------------------------------------------------------------- accounts
@@ -361,18 +329,6 @@ def _h(s):
     return str(s).replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
 
 
-def save_to_library(job, owner, job_id):
-    """Copy a finished job's audio (and source text) into the owner's Library."""
-    if job.get("saved") or not os.path.isfile(job.get("file", "")):
-        return job.get("saved")
-    name = Library(LIBRARY_DIR, owner).save_narration(
-        job["file"], title=job["title"], source=job.get("md", ""),
-        metadata={key: job.get(key) for key in ("secs", "words", "voice")}, job_id=job_id)
-    job["saved"] = name
-    log(owner, job["title"], "saved", name)
-    return name
-
-
 AUDIO_EXT_RE = r"\.(mp3|m4a|aac)"
 
 
@@ -380,79 +336,29 @@ def audio_mime(name):
     return {"mp3": "audio/mpeg", "m4a": "audio/mp4", "aac": "audio/aac"}[name.rsplit(".", 1)[1]]
 
 
-def run_job(job_id, md, voice, title, owner, resume=False):
-    # Runs in a detached daemon thread, so it continues after the user leaves the
-    # job page. Progress is fsync'd and mirrored to disk after every chunk, so an
-    # interrupted job resumes from the last completed chunk on the next startup.
-    # It stops early if the owner sets job["cancel"]; when started with "notify"
-    # it saves the result and emails the owner a link.
-    job = JOBS[job_id]
-    started = time.time()
-    try:
-        if backend_of_voice(voice) == "openai" and not may_use_openai(owner):
-            voice = KOKORO_DEFAULT  # safety: never bill OpenAI for an unauthorized account
-        text = clean_markdown(md)
-        limit = job.get("limit") or (KOKORO_CHUNK_LIMIT if backend_of_voice(voice) == "kokoro" else CHUNK_LIMIT)
-        chunks = chunk(text, limit)
-        total = len(chunks)
-        out_path = os.path.join(JOBS_DIR, job_id + ".mp3")
-        start_i = job.get("done", 0) if resume else 0
-        if resume and 0 < start_i <= total and os.path.isfile(out_path):
-            f = open(out_path, "r+b")          # continue the existing partial file
-            f.truncate(job.get("bytes", 0))    # drop any half-written trailing chunk
-            f.seek(job.get("bytes", 0))
-        else:
-            start_i = 0
-            f = open(out_path, "wb")           # fresh, or partial file was lost
-            job["bytes"] = 0
-        job.update(status="running", total=total, done=start_i, voice=voice, limit=limit,
-                   words=job.get("words") or len(text.split()))
-        persist_job(job_id)
-        cancelled = False
-        try:
-            for i in range(start_i, total):
-                if job.get("cancel"):
-                    cancelled = True
-                    break
-                f.write(tts(chunks[i], voice))
-                f.flush()
-                os.fsync(f.fileno())
-                job["done"] = i + 1
-                job["bytes"] = f.tell()
-                persist_job(job_id)
-        finally:
-            f.close()
-        if cancelled:
-            job.update(status="stopped", secs=round(time.time() - started))
-            persist_job(job_id)
-            try:
-                os.remove(out_path)
-            except OSError:
-                pass
-            log(owner, title, "stopped", f"{job.get('done', 0)}/{total}ch")
-            return
-        job.update(status="done", file=out_path, secs=round(time.time() - started))
-        persist_job(job_id)
-        log(owner, title, "done", f"{job['words']}w/{total}ch/{job['secs']}s")
-        if job.get("notify") or job.get("autosave"):
-            # autosave: API clients (the Android app) have no manual "save" step,
-            # so a job they submit must land in the Library on its own.
-            saved = save_to_library(job, owner, job_id)   # durable target (email link / API pickup)
-            persist_job(job_id)
-            if job.get("notify"):
-                link = f"{BASE_URL}/library#{saved}" if saved else f"{BASE_URL}/job/{job_id}"
-                send_email(owner, f'sotto: "{title}" is ready',
-                           f"<p>Your narration <b>{_h(title)}</b> is ready "
-                           f"({job['words']} words, narrated in {fmt_duration(job['secs'])}).</p>"
-                           f'<p><a href="{link}">Listen in your Library</a>.</p>')
-    except Exception as e:
-        job.update(status="error", error=str(e))
-        persist_job(job_id)
-        log(owner, title, "error", str(e)[:200])
-        if job.get("notify"):
-            send_email(owner, f'sotto: "{title}" could not be completed',
-                       f"<p>Sorry - synthesizing <b>{_h(title)}</b> did not finish.</p>"
-                       f'<p>You can <a href="{BASE_URL}/">try again</a>.</p>')
+def execution_voice(owner, voice):
+    if not voice or (backend_of_voice(voice) == "openai" and not may_use_openai(owner)):
+        return KOKORO_DEFAULT
+    return voice
+
+
+def narration_chunk_limit(voice):
+    return CHUNK_LIMIT if backend_of_voice(voice) == "openai" else KOKORO_CHUNK_LIMIT
+
+
+def notify_narration(job, succeeded):
+    owner, title = job.get("owner"), job["title"]
+    if succeeded:
+        saved = job.get("saved")
+        link = f"{BASE_URL}/library#{saved}" if saved else f"{BASE_URL}/job/{job['id']}"
+        send_email(owner, f'sotto: "{title}" is ready',
+                   f"<p>Your narration <b>{_h(title)}</b> is ready "
+                   f"({job['words']} words, narrated in {fmt_duration(job['secs'])}).</p>"
+                   f'<p><a href="{link}">Listen in your Library</a>.</p>')
+    else:
+        send_email(owner, f'sotto: "{title}" could not be completed',
+                   f"<p>Sorry - synthesizing <b>{_h(title)}</b> did not finish.</p>"
+                   f'<p>You can <a href="{BASE_URL}/">try again</a>.</p>')
 
 
 def log(who, title, status, detail):
@@ -461,6 +367,11 @@ def log(who, title, status, detail):
     with LOG_LOCK:
         with open(LOG_PATH, "a") as f:
             f.write(line + "\n")
+
+
+narration_jobs = NarrationJobs(JOBS_DIR, LIBRARY_DIR, clean=clean_markdown, chunk=chunk,
+                               synthesize=tts, chunk_limit=narration_chunk_limit,
+                               execution_voice=execution_voice, audit=log, notify=notify_narration)
 
 
 # ------------------------------------------------------------------------ templates
@@ -680,7 +591,7 @@ if(s&&s.t){a.addEventListener('loadedmetadata',function h(){try{a.currentTime=s.
 a.addEventListener('ended',function(){try{sessionStorage.removeItem(PK)}catch(e){}});
 })();
 </script>
-<p><a href="/job/{{id}}/audio" download="{{slug}}.mp3">Download MP3</a> &middot; <a href="/">Convert another</a></p>
+<p><a href="/job/{{id}}/audio" download="{{download_name}}">Download MP3</a> &middot; <a href="/">Convert another</a></p>
 {% if job.get('saved') %}<p class=muted>Saved to <a href="/library#{{job.saved}}">Library</a> as {{job.saved}}.</p>
 {% else %}<form method=post action="/job/{{id}}/save"><input type=hidden name=_csrf value="{{csrf}}"><button type=submit>Save to Library</button></form>{% endif %}
 {% else %}
@@ -1077,104 +988,75 @@ def convert():
         voice = default_voice_for(owner)
     remember_voice(owner, voice)         # preselect this voice next time
     title = (request.form.get("title") or "").strip()[:120]
-    if not title:
-        m = re.search(r"^#\s+(.+)$", md, re.M) or re.search(r"^(.{3,80})$", md, re.M)
-        title = (m.group(1).strip() if m else "Untitled document")
-    job_id = uuid.uuid4().hex
-    limit = KOKORO_CHUNK_LIMIT if backend_of_voice(voice) == "kokoro" else CHUNK_LIMIT
-    JOBS[job_id] = {"status": "queued", "title": title, "owner": owner, "voice": voice,
-                    "limit": limit, "created": time.time(), "done": 0, "total": None,
-                    "md": md, "notify": bool(request.form.get("notify"))}
-    try:
-        with open(os.path.join(JOBS_DIR, job_id + ".md.src"), "w", encoding="utf-8") as f:
-            f.write(md)
-    except OSError:
-        pass
-    persist_job(job_id)
-    log(owner, title, "queued", f"{len(md.split())}w voice={voice}")
-    threading.Thread(target=run_job, args=(job_id, md, voice, title, owner), daemon=True).start()
+    job_id = narration_jobs.submit(owner, md, voice, title, notify=bool(request.form.get("notify")))
     return redirect(url_for("job_page", job_id=job_id))
 
 
 def owned_job(job_id):
-    job = JOBS.get(job_id)
+    job = narration_jobs.snapshot(job_id)
     if not job or (job.get("owner") != current_user() and not is_admin()):
         abort(404)
     return job
 
 
+def job_download_name(job):
+    slug = re.sub(r"[^a-z0-9]+", "-", job["title"].lower()).strip("-")[:60] or "sotto"
+    return slug + ".mp3"
+
+
 @app.route("/job/<job_id>")
 def job_page(job_id):
     job = owned_job(job_id)
-    pct = int(100 * job.get("done", 0) / (job.get("total") or 1)) if job["status"] == "running" else (100 if job["status"] == "done" else 0)
-    slug = re.sub(r"[^a-z0-9]+", "-", job["title"].lower()).strip("-")[:60] or "sotto"
+    if job["status"] == "running":
+        pct = int(100 * job["done"] / (job["total"] or 1))
+    else:
+        pct = 100 if job["status"] == "done" else 0
     elapsed = fmt_duration(time.time() - job["created"]) if job.get("created") else None
-    # The text the user entered, for review on this page. Prefer the in-memory
-    # copy; fall back to the .md.src sidecar (survives a restart/resume).
-    src = job.get("md")
-    if not src:
-        try:
-            src = open(os.path.join(JOBS_DIR, job_id + ".md.src"), encoding="utf-8").read()
-        except OSError:
-            src = None
+    src = narration_jobs.source(job_id)
     # A running job updates via JS polling (see JOB template) rather than a full
     # page refresh, so previewing the partial audio is not interrupted.
-    return render(JOB, "sotto - " + job["title"][:40], job=job, id=job_id, pct=pct, slug=slug,
-                  elapsed=elapsed, src=src)
+    return render(JOB, "sotto - " + job["title"][:40], job=job, id=job_id, pct=pct,
+                  download_name=job_download_name(job), elapsed=elapsed, src=src)
 
 
 @app.route("/job/<job_id>/audio")
 def job_audio(job_id):
     job = owned_job(job_id)
-    path = os.path.join(JOBS_DIR, job_id + ".mp3")
-    # Serve the partial while running (preview) as well as the finished file.
-    if job.get("status") not in ("running", "done") or not os.path.isfile(path):
+    path = narration_jobs.playable_audio(job_id)
+    if path is None:
         abort(404)
-    slug = re.sub(r"[^a-z0-9]+", "-", job["title"].lower()).strip("-")[:60] or "sotto"
-    return send_file(path, mimetype="audio/mpeg", download_name=slug + ".mp3",
+    return send_file(path, mimetype="audio/mpeg", download_name=job_download_name(job),
                      conditional=not app.config["USE_X_SENDFILE"])
 
 
 @app.route("/job/<job_id>/status")
 def job_status(job_id):
     job = owned_job(job_id)
-    total = job.get("total") or 0
-    done = job.get("done", 0)
-    pct = int(100 * done / total) if total else (100 if job.get("status") == "done" else 0)
     elapsed = fmt_duration(time.time() - job["created"]) if job.get("created") else None
-    return {"status": job.get("status"), "done": done, "total": job.get("total"),
-            "words": job.get("words"), "pct": pct, "elapsed": elapsed}
+    return {"status": job.get("status"), "done": job["done"], "total": job["total"],
+            "words": job.get("words"), "pct": job["pct"], "elapsed": elapsed}
 
 
 @app.route("/job/<job_id>/save", methods=["POST"])
 def job_save(job_id):
-    job = owned_job(job_id)
-    if job.get("status") != "done" or not os.path.isfile(job.get("file", "")):
+    owned_job(job_id)
+    if narration_jobs.save(job_id) is None:
         abort(404)
-    save_to_library(job, job["owner"], job_id)
-    persist_job(job_id)
     return redirect(url_for("library"))
 
 
 @app.route("/job/<job_id>/rename", methods=["POST"])
 def job_rename(job_id):
-    job = owned_job(job_id)
+    owned_job(job_id)
     new = (request.form.get("title") or "").strip()[:120]
-    if new and new != job.get("title"):
-        job["title"] = new
-        persist_job(job_id)
-        if job.get("saved"):   # already in the library -> keep its display name in step
-            Library(LIBRARY_DIR, job["owner"]).set_title(job["saved"], new)
-        log(job["owner"], new, "rename", job_id[:8])
+    narration_jobs.rename(job_id, new)
     return redirect(url_for("job_page", job_id=job_id))
 
 
 @app.route("/job/<job_id>/stop", methods=["POST"])
 def job_stop(job_id):
-    job = owned_job(job_id)
-    if job.get("status") in ("queued", "running"):
-        job["cancel"] = True   # run_job checks this between chunks
-        log(job["owner"], job["title"], "stop-requested", "")
+    owned_job(job_id)
+    narration_jobs.stop(job_id)
     return redirect(url_for("job_page", job_id=job_id))
 
 
@@ -1217,17 +1099,7 @@ def library():
                       "text": text, "text_name": entry.source_name if text is not None else None,
                       "share_url": (BASE_URL + "/share/" + sh["token"]) if sh else None,
                       "share_text": sh["text"] if sh else False})
-    # In-progress orations: this user's jobs still being synthesized.
-    active = []
-    for jid, j in JOBS.items():
-        if j.get("owner") == current_user() and j.get("status") in ("queued", "running"):
-            total = j.get("total") or 0
-            done = j.get("done", 0)
-            active.append({"id": jid, "title": j.get("title", "Untitled"),
-                           "status": j.get("status"), "done": done, "total": j.get("total"),
-                           "pct": int(100 * done / total) if total else 0,
-                           "created": j.get("created", 0)})
-    active.sort(key=lambda a: a["created"], reverse=True)
+    active = narration_jobs.active_for(current_user())
     return render(LIB, "sotto - library", items=items, active=active)
 
 
@@ -1556,23 +1428,8 @@ def api_narrate():
         # an unauthorized account should fail loudly, not bill nothing quietly.
         return _api_err(403, "voice", f"{voice} not available to this account")
     title = (data.get("title") or "").strip()[:120]
-    if not title:
-        m = re.search(r"^#\s+(.+)$", md, re.M) or re.search(r"^(.{3,80})$", md, re.M)
-        title = (m.group(1).strip() if m else "Untitled document")
     remember_voice(owner, voice)
-    job_id = uuid.uuid4().hex
-    limit = KOKORO_CHUNK_LIMIT if backend_of_voice(voice) == "kokoro" else CHUNK_LIMIT
-    JOBS[job_id] = {"status": "queued", "title": title, "owner": owner, "voice": voice,
-                    "limit": limit, "created": time.time(), "done": 0, "total": None,
-                    "md": md, "notify": bool(data.get("notify")), "autosave": True}
-    try:
-        with open(os.path.join(JOBS_DIR, job_id + ".md.src"), "w", encoding="utf-8") as f:
-            f.write(md)
-    except OSError:
-        pass
-    persist_job(job_id)
-    log(owner, title, "api-narrate", f"{len(md.split())}w voice={voice}")
-    threading.Thread(target=run_job, args=(job_id, md, voice, title, owner), daemon=True).start()
+    job_id = narration_jobs.submit(owner, md, voice, title, notify=bool(data.get("notify")), autosave=True)
     return jsonify({"job_id": job_id, "status": "queued", "voice": voice,
                     "backend": backend_of_voice(voice)}), 202
 
@@ -1580,14 +1437,14 @@ def api_narrate():
 @app.route("/api/v1/jobs/<job_id>")
 @require_token
 def api_job(job_id):
-    job = JOBS.get(job_id)
+    job = narration_jobs.snapshot(job_id)
     if not job or job.get("owner") != g.api_user:
         return _api_err(404, "not-found", "no such job")
-    total = job.get("total") or 0
-    done = job.get("done", 0)
-    pct = int(100 * done / total) if total else (100 if job.get("status") == "done" else 0)
-    return jsonify({"status": job.get("status"), "done": done, "total": job.get("total"),
-                    "words": job.get("words"), "pct": pct, "error": job.get("error"),
+    # A failed autosave ends the token caller's wait even when the audio is ready.
+    error = job.get("error")
+    status = "error" if error else job.get("status")
+    return jsonify({"status": status, "done": job["done"], "total": job["total"],
+                    "words": job.get("words"), "pct": job["pct"], "error": error,
                     "name": job.get("saved")})   # set once the result is in the Library
 
 
@@ -1686,48 +1543,10 @@ def api_delete(name):
     return "", 204
 
 
-def resume_jobs():
-    """On startup: reload persisted jobs, prune old finished ones, and resume any
-    that were interrupted (queued/running) from their last completed chunk."""
-    now = time.time()
-    for fn in sorted(os.listdir(JOBS_DIR)):
-        if not fn.endswith(".json"):
-            continue
-        job_id = fn[:-5]
-        try:
-            data = json.load(open(os.path.join(JOBS_DIR, fn)))
-        except Exception:
-            continue
-        if data.get("status") in ("done", "error", "stopped"):
-            if now - data.get("created", now) > 7 * 86400:
-                remove_job_files(job_id)          # prune finished jobs after a week
-            else:
-                JOBS[job_id] = data               # keep viewable across restarts
-            continue
-        src = os.path.join(JOBS_DIR, job_id + ".md.src")
-        if not os.path.isfile(src):
-            data.update(status="error", error="interrupted; source text unavailable")
-            JOBS[job_id] = data
-            persist_job(job_id)
-            continue
-        try:
-            md = open(src, encoding="utf-8").read()
-        except OSError:
-            continue
-        data["md"] = md
-        JOBS[job_id] = data
-        log(data.get("owner"), data.get("title", "?"), "resumed",
-            f"{data.get('done', 0)}/{data.get('total', '?')}ch")
-        threading.Thread(target=run_job,
-                         args=(job_id, md, data.get("voice", KOKORO_DEFAULT),
-                               data.get("title", "Untitled"), data.get("owner")),
-                         kwargs={"resume": True}, daemon=True).start()
-
-
 # Only the real service sets LECTOR_RESUME=1 (see deploy/lector.service), so a
 # test import of this module never re-spawns workers for in-flight jobs.
 if os.environ.get("LECTOR_RESUME") == "1":
-    resume_jobs()
+    narration_jobs.restore()
 
 
 if __name__ == "__main__":

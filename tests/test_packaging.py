@@ -22,7 +22,7 @@ class PackagingTests(unittest.TestCase):
                 if parts[-1] == ".":
                     for source in parts[1:-1]:
                         shutil.copy2(ROOT / source, Path(directory) / source)
-            env = {**os.environ, "LECTOR_RESUME": "0", "SMTP_HOST": "", "SMTP_PASS": ""}
+            env = {**os.environ, "LECTOR_RESUME": "1", "SMTP_HOST": "", "SMTP_PASS": ""}
             env.pop("PYTHONPATH", None)
             result = subprocess.run(
                 [sys.executable, "-B", "-c",

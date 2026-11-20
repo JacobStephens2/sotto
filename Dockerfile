@@ -8,7 +8,7 @@ WORKDIR /app
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt waitress
 
-COPY app.py library_store.py .
+COPY app.py library_store.py narration_jobs.py .
 COPY samples/ samples/
 
 # Library, jobs, and state are volumes (declared in docker-compose.yml) so
