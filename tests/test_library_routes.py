@@ -8,6 +8,7 @@ import re
 import shutil
 import sys
 import tempfile
+from threading import Event
 import time
 import unittest
 from unittest.mock import patch
@@ -24,10 +25,11 @@ class LibraryRoutesTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name)
-        for name in ("app.py", "library_store.py"):
-            if (ROOT / name).exists():
-                shutil.copy2(ROOT / name, self.root / name)
-        env = patch.dict(os.environ, {"LECTOR_RESUME": "0", "SMTP_HOST": "", "SMTP_PASS": ""})
+        for name in ("app.py", "library_store.py", "narration_jobs.py"):
+            shutil.copy2(ROOT / name, self.root / name)
+        env = patch.dict(os.environ, {"LECTOR_RESUME": "0", "LECTOR_TTS_BACKEND": "kokoro",
+                                      "LECTOR_OPENAI_ALLOWED": "someone-else@example.com",
+                                      "SMTP_HOST": "", "SMTP_PASS": ""})
         env.start()
         self.addCleanup(env.stop)
         self.import_count = 0
@@ -88,14 +90,126 @@ class LibraryRoutesTests(unittest.TestCase):
     def audit(self):
         return [json.loads(line) for line in (self.root / "lector.log").read_text().splitlines()]
 
-    def finished_job(self, job_id="abcdef123456", **fields):
-        audio = self.root / "jobs" / (job_id + ".mp3")
+    def finished_job(self, job_id="abcdef123456", source="# Exact source"):
+        jobs = self.root / "jobs"
+        audio = jobs / (job_id + ".mp3")
         audio.write_bytes(AUDIO)
         job = {"status": "done", "title": "Original title", "owner": OWNER,
-               "file": str(audio), "md": "# Exact source", "secs": 20,
-               "words": 100, "voice": "am_michael", **fields}
-        self.module.JOBS[job_id] = job
+               "file": str(audio), "secs": 20, "words": 100, "voice": "am_michael"}
+        (jobs / (job_id + ".json")).write_text(json.dumps(job))
+        if source is not None:
+            (jobs / (job_id + ".md.src")).write_bytes(source.encode())
+        self.client = self.restarted_client()
         return job_id
+
+    def wait_for_job(self, job_id, predicate):
+        deadline = time.monotonic() + 5
+        while True:
+            response = self.client.get(f"/api/v1/jobs/{job_id}", headers=self.auth)
+            self.assertEqual(response.status_code, 200)
+            if predicate(response.json):
+                return response.json
+            if response.json["status"] == "error" or time.monotonic() >= deadline:
+                self.fail(f"Job did not reach the expected state: {response.json}")
+            time.sleep(0.005)
+
+    def test_web_job_saved_after_restart_retains_submitted_markdown(self):
+        source = "# Exact source\n\nA **marked-up** café."
+        with patch.object(self.module, "tts_kokoro", return_value=AUDIO):
+            response = self.post("/convert", md=source, voice="am_michael")
+            self.assertEqual(response.status_code, 302)
+            job_id = response.location.rsplit("/", 1)[1]
+            self.wait_for_job(job_id, lambda job: job["status"] == "done")
+
+        client = self.restarted_client()
+        self.assertIn(source, client.get(f"/job/{job_id}").get_data(as_text=True))
+        self.assertEqual(client.post(f"/job/{job_id}/save", data={"_csrf": "test-csrf"}).location, "/library")
+        entry, = client.get("/api/v1/library", headers=self.auth).json["entries"]
+        with client.get(f"/api/v1/library/{entry['name']}/text", headers=self.auth) as response:
+            self.assertEqual((entry["has_text"], response.status_code), (True, 200))
+            self.assertEqual(response.data, source.encode())
+
+    def test_completed_legacy_job_without_source_can_still_save_audio(self):
+        job_id = self.finished_job(source=None)
+        self.assertEqual(self.post(f"/job/{job_id}/save").location, "/library")
+        entry, = self.entries()
+        self.assertFalse(entry["has_text"])
+        with self.client.get(f"/api/v1/library/{entry['name']}/audio", headers=self.auth) as response:
+            self.assertEqual(response.data, AUDIO)
+
+    def test_web_upload_and_token_submission_share_live_progress_and_audio_preview(self):
+        users = self.root / "state" / "users.json"
+        users.write_text(json.dumps({OWNER: {}, OTHER: {"admin": True}}))
+        source = "# In-progress fixture\n\n" + "one " * 150 + "first.\n\n" + "two " * 150 + "second."
+        for caller in ("web", "token"):
+            with self.subTest(caller=caller):
+                second_chunk = Event()
+                release = Event()
+
+                def synthesize(text, voice):
+                    if "second." in text:
+                        second_chunk.set()
+                        if not release.wait(5):
+                            raise TimeoutError("test did not release synthesis")
+                    return AUDIO
+
+                title = f"Live {caller} narration"
+                with patch.object(self.module, "tts_kokoro", side_effect=synthesize) as synth:
+                    if caller == "web":
+                        response = self.post("/convert", md="overridden", voice="onyx", title=title,
+                                             file=(io.BytesIO(source.encode()), "source.md"))
+                        self.assertEqual(response.status_code, 302)
+                        job_id = response.location.rsplit("/", 1)[1]
+                        expected_voice = "af_heart"
+                    else:
+                        response = self.client.post("/api/v1/narrate", headers=self.auth,
+                                                    json={"text": source, "voice": "am_michael", "title": title})
+                        self.assertEqual(response.status_code, 202)
+                        job_id = response.json["job_id"]
+                        expected_voice = "am_michael"
+                        self.assertEqual(response.json, {"job_id": job_id, "status": "queued",
+                                                         "voice": expected_voice, "backend": "kokoro"})
+                    try:
+                        self.assertTrue(second_chunk.wait(5))
+                        self.assertEqual(json.loads(users.read_text())[OWNER]["last_voice"], expected_voice)
+                        self.assertEqual(synth.call_args.args[1], expected_voice)
+                        path = f"/job/{job_id}"
+                        status = self.client.get(path + "/status").json
+                        self.assertRegex(status.pop("elapsed"), r"^\d+s$")
+                        self.assertEqual(status, {"status": "running", "done": 1, "total": 2,
+                                                  "words": 304, "pct": 50})
+                        token_status = self.client.get(f"/api/v1/jobs/{job_id}", headers=self.auth).json
+                        self.assertEqual(token_status, {"status": "running", "done": 1, "total": 2,
+                                                        "words": 304, "pct": 50, "error": None, "name": None})
+                        self.assertIn("# In-progress fixture", self.client.get(path).get_data(as_text=True))
+                        self.assertIn(path, self.client.get("/library").get_data(as_text=True))
+                        with self.client.get(path + "/audio", headers={"Range": "bytes=0-3"}) as preview:
+                            self.assertEqual((preview.status_code, preview.data), (206, AUDIO[:4]))
+                        self.assertEqual(self.post(path + "/save").status_code, 404)
+
+                        self.web_as(OTHER)
+                        self.assertEqual(self.client.get(path).status_code, 200)
+                        self.assertNotIn(path, self.client.get("/library").get_data(as_text=True))
+                        self.assertEqual(self.client.get(f"/api/v1/jobs/{job_id}",
+                                                         headers={"Authorization": "Bearer other-token"}).status_code, 404)
+                    finally:
+                        self.web_as(OWNER)
+                        release.set()
+                        result = self.wait_for_job(job_id, lambda job: job["status"] == "done"
+                                                   and (caller == "web" or job["name"]))
+                expected_name = "live-token-narration.mp3" if caller == "token" else None
+                self.assertEqual(result["name"], expected_name)
+
+    def test_narration_request_validation_stays_specific_to_each_caller(self):
+        token_cases = (({}, 400, "validation"),
+                       ({"text": "text", "voice": "onyx"}, 403, "voice"),
+                       ({"text": "é" * 204801}, 413, "too-large"))
+        for payload, code, error in token_cases:
+            with self.subTest(code=code):
+                response = self.client.post("/api/v1/narrate", headers=self.auth, json=payload)
+                self.assertEqual((response.status_code, response.json["error"]), (code, error))
+        self.assertEqual(self.post("/convert", md="  ").location, "/")
+        self.assertEqual(self.post("/convert", md="é" * 204801).status_code, 413)
 
     def test_saved_job_rename_advances_sync_revision(self):
         job_id = self.finished_job()
