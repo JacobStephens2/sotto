@@ -1440,8 +1440,11 @@ def api_job(job_id):
     job = narration_jobs.snapshot(job_id)
     if not job or job.get("owner") != g.api_user:
         return _api_err(404, "not-found", "no such job")
-    return jsonify({"status": job.get("status"), "done": job["done"], "total": job["total"],
-                    "words": job.get("words"), "pct": job["pct"], "error": job.get("error"),
+    # A failed autosave ends the token caller's wait even when the audio is ready.
+    error = job.get("error")
+    status = "error" if error else job.get("status")
+    return jsonify({"status": status, "done": job["done"], "total": job["total"],
+                    "words": job.get("words"), "pct": job["pct"], "error": error,
                     "name": job.get("saved")})   # set once the result is in the Library
 
 

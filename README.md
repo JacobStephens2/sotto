@@ -99,10 +99,11 @@ With the app dependencies installed (`pip install -r requirements.txt`), run:
 python3 -m unittest discover -s tests -v
 ```
 
-The standard-library unittest suite exercises the Library interface against real
-temporary files and Flask requests against a temporary copy of the application.
-Resume is disabled except when reloading completed jobs to verify persistence;
-tests do not use production state, TTS services or SMTP.
+The standard-library unittest suite exercises Narration jobs and the Library
+against real temporary files, and sends Flask requests to a temporary copy of
+the application. Flask tests enable startup recovery when reloading completed
+jobs, and the packaging smoke check enables it with an empty jobs directory.
+Tests use deterministic synthesis and avoid production state, TTS services and SMTP.
 The application import smoke check also verifies the Dockerfile's copied Python
 sources and the existing `app:app` service entry point. If Docker is available,
 the image can additionally be checked with `docker build -t sotto-library-test .`.

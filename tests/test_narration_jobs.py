@@ -5,6 +5,7 @@ from tempfile import TemporaryDirectory
 from threading import Barrier, Event
 import time
 import unittest
+from unittest.mock import patch
 
 from library_store import Library
 from narration_jobs import NarrationJobs
@@ -26,13 +27,14 @@ class NarrationJobsTests(unittest.TestCase):
         self.library_dir = root / "library"
         self.audit = []
 
-    def service(self, synthesize=None):
+    def service(self, synthesize=None, *, notify=None):
         return NarrationJobs(
             self.jobs_dir, self.library_dir, clean=str.strip,
             chunk=lambda text, limit: [text[i:i + limit] for i in range(0, len(text), limit)],
             synthesize=synthesize or self.audio, chunk_limit=lambda voice: 2 if voice == "fallback" else 3,
             execution_voice=lambda owner, voice: "fallback" if voice == "paid" else voice,
-            audit=lambda *event: self.audit.append(event), notify=lambda job, succeeded: None,
+            audit=lambda *event: self.audit.append(event),
+            notify=notify or (lambda job, succeeded: None),
         )
 
     @staticmethod
@@ -173,3 +175,48 @@ class NarrationJobsTests(unittest.TestCase):
         self.assertEqual(library.source_file(entry.name).read_bytes(), source.encode())
         self.assertEqual(library.audio_file(entry.name).read_bytes(), COMPLETE_AUDIO)
         self.assertEqual([event[2] for event in self.audit], ["saved"])
+
+    def test_retry_after_a_failed_sidecar_write_creates_one_complete_library_entry(self):
+        self.write_record("123456abcdefgh", source="# Exact source", status="done", audio=COMPLETE_AUDIO)
+        jobs = self.service()
+        jobs.restore()
+        original_write = Path.write_text
+
+        def simulate_sidecar_failure(path, *args, **kwargs):
+            if path.name == "fixture.md":
+                raise OSError("simulated Library write failure")
+            return original_write(path, *args, **kwargs)
+
+        with patch.object(Path, "write_text", simulate_sidecar_failure):
+            with self.assertRaisesRegex(OSError, "simulated Library write failure"):
+                jobs.save("123456abcdefgh")
+        library = Library(self.library_dir, OWNER)
+        self.assertEqual(library.entries(), [])
+        name = jobs.save("123456abcdefgh")
+        self.assertEqual([entry.name for entry in library.entries()], [name])
+        self.assertEqual(library.source_file(name).read_text(), "# Exact source")
+
+    def test_failed_checkpoint_still_records_outcome_and_notifies(self):
+        entered, release, outcome = Event(), Event(), Event()
+        notifications = []
+
+        def synthesize(text, voice):
+            entered.set()
+            if not release.wait(5):
+                raise TimeoutError("test did not release synthesis")
+            return self.audio(text, voice)
+
+        def notify(job, succeeded):
+            notifications.append((job["id"], succeeded))
+            outcome.set()
+
+        jobs = self.service(synthesize, notify=notify)
+        job_id = jobs.submit(OWNER, SOURCE, "local", "Fixture", notify=True)
+        self.assertTrue(entered.wait(5))
+        with patch("os.replace", side_effect=OSError("checkpoint unavailable")), \
+             patch("threading.excepthook", side_effect=lambda args: outcome.set()):
+            release.set()
+            self.assertTrue(outcome.wait(5))
+            self.assertEqual([event[2] for event in self.audit], ["queued", "error"])
+            self.assertEqual(notifications, [(job_id, False)])
+            self.assertEqual(jobs.snapshot(job_id)["error"], "checkpoint unavailable")

@@ -208,11 +208,12 @@ class NarrationJobs:
                     name = Library(self._library_dir, owner).save_narration(
                         audio, title=title, source=self._read_source(job), metadata=record, job_id=job.id)
                 record["saved"] = name
+                record.pop("error", None)
                 self._audit(owner, title, "saved", name)
             self._persist(job)
             return record["saved"]
 
-    def _checkpoint(self, job, audio, total):
+    def _resume_position(self, job, audio, total):
         done, offset = job.record.get("done", 0), job.record.get("bytes")
         if 0 < done <= total and offset is not None and audio.is_file() and 0 <= offset <= audio.stat().st_size:
             return done, offset
@@ -225,7 +226,7 @@ class NarrationJobs:
         chunks = self._chunk(text, limit)
         total = len(chunks)
         audio = self._path(job.id, ".mp3")
-        done, offset = self._checkpoint(job, audio, total)
+        done, offset = self._resume_position(job, audio, total)
         cancelled = False
         with audio.open("r+b" if done else "wb") as stream:
             with job.lock:
@@ -263,6 +264,23 @@ class NarrationJobs:
                 self._audit(record.get("owner"), title, "done", f"{record['words']}w/{total}ch/{secs}s")
         return not cancelled
 
+    def _record_failure(self, job, title, error, *, synthesis_failed):
+        with job.lock:
+            record = job.record
+            if synthesis_failed:
+                record["status"] = "error"
+            if synthesis_failed or not record.get("saved"):
+                record["error"] = str(error)
+                try:
+                    self._persist(job)
+                except OSError:
+                    # The last checkpoint remains available for a later restart.
+                    pass
+            self._audit(record.get("owner"), title, "error", str(error)[:200])
+            result = dict(self._snapshot(job), title=title)
+        if result.get("notify"):
+            self._notify(result, bool(result.get("saved")) and not synthesis_failed)
+
     def _run(self, job, title):
         started = time.time()
         record = job.record
@@ -271,21 +289,13 @@ class NarrationJobs:
             voice = self._execution_voice(owner, record.get("voice"))
             completed = self._synthesize_audio(job, voice, title, started)
         except Exception as error:
-            with job.lock:
-                record.update(status="error", error=str(error))
-                self._persist(job)
-                self._audit(owner, title, "error", str(error)[:200])
-                failed = dict(self._snapshot(job), title=title)
-            if failed.get("notify"):
-                self._notify(failed, False)
+            self._record_failure(job, title, error, synthesis_failed=True)
             return
         if completed and (record.get("autosave") or record.get("notify")):
             try:
                 self.save(job.id)
             except Exception as error:
-                self._audit(owner, title, "error", str(error)[:200])
-                if record.get("notify"):
-                    self._notify(dict(self.snapshot(job.id), title=title), False)
+                self._record_failure(job, title, error, synthesis_failed=False)
             else:
                 if record.get("notify"):
                     self._notify(dict(self.snapshot(job.id), title=title), True)

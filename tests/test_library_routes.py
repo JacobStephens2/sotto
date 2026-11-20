@@ -211,6 +211,29 @@ class LibraryRoutesTests(unittest.TestCase):
         self.assertEqual(self.post("/convert", md="  ").location, "/")
         self.assertEqual(self.post("/convert", md="é" * 204801).status_code, 413)
 
+    def test_token_poll_reports_autosave_failure_and_completed_audio_can_be_saved(self):
+        blocked_source = self.root / "library" / OWNER / "fixture.md"
+        blocked_source.mkdir(parents=True)
+        source = "# Fixture\n\nSource is kept on retry."
+        with patch.object(self.module, "tts_kokoro", return_value=AUDIO):
+            response = self.client.post("/api/v1/narrate", headers=self.auth,
+                                        json={"text": source, "voice": "am_michael"})
+            self.assertEqual(response.status_code, 202)
+            job_id = response.json["job_id"]
+            status = self.wait_for_job(job_id, lambda job: job["error"] or job["name"])
+        self.assertEqual((status["status"], status["name"]), ("error", None))
+        self.assertTrue(status["error"])
+        self.assertEqual(self.entries(), [])
+        with self.client.get(f"/job/{job_id}/audio") as response:
+            self.assertEqual((response.status_code, response.data), (200, AUDIO))
+
+        blocked_source.rmdir()
+        self.assertEqual(self.post(f"/job/{job_id}/save").location, "/library")
+        status = self.client.get(f"/api/v1/jobs/{job_id}", headers=self.auth).json
+        self.assertEqual((status["status"], status["name"], status["error"]), ("done", "fixture.mp3", None))
+        entry, = self.entries()
+        self.assertEqual((entry["name"], entry["has_text"]), ("fixture.mp3", True))
+
     def test_saved_job_rename_advances_sync_revision(self):
         job_id = self.finished_job()
         self.assertEqual(self.post(f"/job/{job_id}/save").status_code, 302)
