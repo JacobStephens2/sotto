@@ -1,3 +1,4 @@
+from concurrent.futures import ThreadPoolExecutor
 import hashlib
 import importlib.util
 import io
@@ -69,13 +70,13 @@ class LibraryRoutesTests(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         return response.json["entries"]
 
-    def upload(self, name="entry.mp3", *, audio=AUDIO, source=None, meta=None, headers=None):
+    def upload(self, name="entry.mp3", *, audio=AUDIO, source=None, meta=None, headers=None, client=None):
         data = {"audio": (io.BytesIO(audio), name)}
         if source is not None:
             data["text"] = (io.BytesIO(source.encode()), "source.md")
         if meta is not None:
             data["meta"] = meta if isinstance(meta, str) else json.dumps(meta)
-        return self.client.put(f"/api/v1/library/{name}", data=data, headers=headers or self.auth)
+        return (client or self.client).put(f"/api/v1/library/{name}", data=data, headers=headers or self.auth)
 
     def web_as(self, owner):
         with self.client.session_transaction() as session:
@@ -323,6 +324,37 @@ class LibraryRoutesTests(unittest.TestCase):
         self.assertIn("Job only", client.get(f"/job/{job_id}").get_data(as_text=True))
         self.assertEqual(client.get("/api/v1/library", headers=self.auth).json, {"entries": []})
 
+    def test_token_patch_returns_missing_when_delete_wins_after_preflight(self):
+        self.assertEqual(self.upload(source="Original source").status_code, 201)
+        path = "/api/v1/library/entry.mp3"
+        request_class = self.module.app.request_class
+        get_json = request_class.get_json
+
+        def delete_during_patch(request, *args, **kwargs):
+            data = get_json(request, *args, **kwargs)
+            deleted = self.module.app.test_client().delete(path, headers=self.auth)
+            self.assertEqual(deleted.status_code, 204)
+            return data
+
+        with patch.object(request_class, "get_json", delete_during_patch):
+            response = self.client.patch(path, json={"title": "Too late"}, headers=self.auth)
+        self.assertEqual((response.status_code, response.json),
+                         (404, {"error": "not-found", "detail": "no such entry"}))
+        self.assertEqual(self.entries(), [])
+        self.assertEqual([event["status"] for event in self.audit()], ["api-upload", "api-delete"])
+
+    def test_numeric_collision_name_can_be_downloaded_by_sync_client(self):
+        title = "a" * 52
+        job_id = self.finished_job()
+        occupied = {f"{title}.mp3", f"{title}-{job_id[:6]}.mp3"}
+        for name in occupied:
+            self.assertEqual(self.upload(name).status_code, 201)
+        self.assertEqual(self.post(f"/job/{job_id}/rename", title=title).status_code, 302)
+        self.assertEqual(self.post(f"/job/{job_id}/save").location, "/library")
+        name, = {entry["name"] for entry in self.entries()} - occupied
+        with self.client.get(f"/api/v1/library/{name}/audio", headers=self.auth) as response:
+            self.assertEqual((response.status_code, response.data), (200, AUDIO))
+
     def test_repeated_manual_save_keeps_marker_and_persistence(self):
         job_id = self.finished_job()
         for _ in range(2):
@@ -397,6 +429,41 @@ class LibraryRoutesTests(unittest.TestCase):
         with self.client.get("/api/v1/library/entry.mp3/text", headers=self.auth) as response:
             self.assertEqual(response.data, b"kept source")
         self.assertEqual(self.audit()[-1]["detail"], "entry.mp3 11B replaced")
+
+    def test_concurrent_conditional_uploads_return_201_and_409_with_complete_winner(self):
+        copying, release = Event(), Event()
+        copy_stream = shutil.copyfileobj
+        conditional = {**self.auth, "If-None-Match": "*"}
+
+        def pause_first_audio(src, dst, *args, **kwargs):
+            if not copying.is_set() and Path(dst.name).name in {"entry.mp3", "entry.mp3.tmp"}:
+                copying.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release upload copy")
+            return copy_stream(src, dst, *args, **kwargs)
+
+        with patch.object(shutil, "copyfileobj", pause_first_audio), ThreadPoolExecutor(2) as pool:
+            first = pool.submit(self.upload, audio=b"First audio", source="First source",
+                                meta={"title": "First", "words": 10}, headers=conditional,
+                                client=self.module.app.test_client())
+            try:
+                self.assertTrue(copying.wait(5))
+                second = pool.submit(self.upload, audio=b"Second audio", source="Second source",
+                                     meta={"title": "Second", "words": 20}, headers=conditional,
+                                     client=self.module.app.test_client()).result(timeout=5)
+                self.assertEqual((second.status_code, second.json), (201, {"name": "entry.mp3"}))
+            finally:
+                release.set()
+            conflict = first.result(timeout=5)
+
+        self.assertEqual((conflict.status_code, conflict.json),
+                         (409, {"error": "conflict", "detail": "entry exists"}))
+        entry, = self.entries()
+        self.assertEqual((entry["title"], entry["words"], entry["size"]), ("Second", 20, 12))
+        for suffix, content in (("audio", b"Second audio"), ("text", b"Second source")):
+            with self.client.get(f"/api/v1/library/entry.mp3/{suffix}", headers=self.auth) as response:
+                self.assertEqual((response.status_code, response.data), (200, content))
+        self.assertEqual([event["status"] for event in self.audit()], ["api-upload"])
 
     def test_token_validation_auth_and_legacy_web_names_are_preserved(self):
         self.assertEqual(self.client.get("/api/v1/library").status_code, 401)

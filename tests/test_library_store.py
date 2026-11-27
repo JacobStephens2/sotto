@@ -1,9 +1,13 @@
+from concurrent.futures import ThreadPoolExecutor
 import io
 import json
 import os
 from pathlib import Path
+import shutil
 import tempfile
+from threading import Event
 import unittest
+from unittest.mock import patch
 
 from library_store import Library
 
@@ -64,8 +68,82 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertEqual(self.library.read_source(name), "# Exact source")
         self.assertEqual(self.library.audio_file(name).read_bytes(), AUDIO)
         self.assertEqual(self.library.save_narration(completed, **args), "an-exact-title-abcdef.mp3")
+        self.assertEqual(self.library.save_narration(completed, **args), "an-exact-title-abcdef-2.mp3")
         self.assertEqual(self.library.save_narration(completed, title="?!", source="", metadata={},
                                                     job_id="123456"), "narration.mp3")
+
+    def test_conditional_upload_can_claim_name_while_narration_is_staging(self):
+        completed = self.root / "completed.mp3"
+        completed.write_bytes(AUDIO)
+        os.utime(completed, (1000000000, 1000000000))
+        uploader = Library(self.root, OWNER)
+        copying, release = Event(), Event()
+        copy2 = shutil.copy2
+        provenance = {"secs": 26, "words": 100, "voice": "am_michael"}
+
+        def pause_copy(src, dst, **kwargs):
+            if src == completed:
+                copying.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release narration copy")
+            return copy2(src, dst, **kwargs)
+
+        with patch.object(shutil, "copy2", pause_copy), ThreadPoolExecutor(2) as pool:
+            saved = pool.submit(self.library.save_narration, completed, title="Fixture",
+                                source="Narration source", metadata=provenance, job_id="abcdef123456")
+            try:
+                self.assertTrue(copying.wait(5))
+                uploaded = pool.submit(uploader.upload, "fixture.mp3", io.BytesIO(b"Upload audio"),
+                                       source=io.BytesIO(b"Upload source"),
+                                       metadata={"title": "Upload", "words": 20}, if_absent=True)
+                self.assertTrue(uploaded.result(timeout=5).created)
+            finally:
+                release.set()
+            self.assertEqual(saved.result(timeout=5), "fixture-abcdef.mp3")
+
+        upload = self.library.lookup("fixture.mp3")
+        self.assertEqual((upload.title, upload.metadata["words"]), ("Upload", 20))
+        self.assertEqual(self.library.read_source(upload.name), "Upload source")
+        self.assertEqual(self.library.audio_file(upload.name).read_bytes(), b"Upload audio")
+        narration = uploader.lookup("fixture-abcdef.mp3")
+        self.assertEqual((narration.title, narration.metadata, narration.mtime),
+                         ("Fixture", provenance, 1000000000))
+        self.assertEqual(uploader.read_source(narration.name), "Narration source")
+        self.assertEqual(uploader.audio_file(narration.name).read_bytes(), AUDIO)
+
+    def test_narration_can_claim_name_while_conditional_upload_is_staging(self):
+        completed = self.root / "completed.mp3"
+        completed.write_bytes(AUDIO)
+        uploader = Library(self.root, OWNER)
+        copying, release = Event(), Event()
+
+        class PausedAudio(io.BytesIO):
+            def read(self, size):
+                copying.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release upload copy")
+                return super().read(size)
+
+        name = "fixture.mp3"
+        provenance = {"secs": 26, "words": 100, "voice": "am_michael"}
+        with ThreadPoolExecutor(2) as pool:
+            uploaded = pool.submit(uploader.upload, name, PausedAudio(b"Upload audio"),
+                                   source=io.BytesIO(b"Upload source"),
+                                   metadata={"title": "Upload", "words": 20}, if_absent=True)
+            try:
+                self.assertTrue(copying.wait(5))
+                saved = pool.submit(self.library.save_narration, completed, title="Fixture",
+                                    source="Narration source", metadata=provenance, job_id="abcdef123456")
+                self.assertEqual(saved.result(timeout=5), name)
+            finally:
+                release.set()
+            with self.assertRaises(FileExistsError):
+                uploaded.result(timeout=5)
+
+        entry, = uploader.entries()
+        self.assertEqual((entry.name, entry.title, entry.metadata), (name, "Fixture", provenance))
+        self.assertEqual(uploader.read_source(name), "Narration source")
+        self.assertEqual(uploader.audio_file(name).read_bytes(), AUDIO)
 
     def test_upload_conflict_and_replacement_preserve_omitted_source(self):
         result = self.library.upload("uploaded.m4a", io.BytesIO(b"first"), source=io.BytesIO(b"source"),
@@ -73,8 +151,10 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertTrue(result.created)
         self.assertEqual(result.size, 5)
         self.assertEqual(self.library.lookup("uploaded.m4a").title, "Initial")
+        unreadable = io.BytesIO()
+        unreadable.close()
         with self.assertRaises(FileExistsError):
-            self.library.upload("uploaded.m4a", io.BytesIO(b"conflicting"), if_absent=True)
+            self.library.upload("uploaded.m4a", unreadable, if_absent=True)
         self.assertEqual(self.library.audio_file("uploaded.m4a").read_bytes(), b"first")
         result = self.library.upload("uploaded.m4a", io.BytesIO(b"second"))
         self.assertFalse(result.created)
@@ -84,6 +164,109 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertEqual(self.library.lookup("uploaded.m4a").metadata,
                          {"secs": None, "words": None, "voice": None, "duration_secs": None})
         self.assertEqual(self.library.audio_file("uploaded.m4a").read_bytes(), b"second")
+
+    def test_failed_source_stream_preserves_entry_and_upload_can_retry(self):
+        class BrokenSource(io.BytesIO):
+            def read(self, size):
+                data = super().read(size)
+                if not data:
+                    raise OSError("source stream interrupted")
+                return data
+
+        name = "fixture.m4a"
+        path = self.legacy(name, audio=b"Before", title="Original", source="Original source",
+                           meta={"words": 100, "duration_secs": 42})
+        os.utime(path, (1000000000, 1000000000))
+        writer = Library(self.root, OWNER)
+        original = self.library.lookup(name)
+
+        with self.assertRaisesRegex(OSError, "source stream interrupted"):
+            writer.upload(name, io.BytesIO(b"After"), source=BrokenSource(b"Partial source"),
+                          metadata={"title": "Replacement", "words": 20})
+
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"Before")
+        self.assertEqual(self.library.read_source(name), "Original source")
+        self.assertEqual(self.library.lookup(name), original)
+        result = writer.upload(name, io.BytesIO(b"After"), source=io.BytesIO(b"Complete source"),
+                               metadata={"title": "Replacement", "words": 20})
+        self.assertFalse(result.created)
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"After")
+        self.assertEqual(self.library.read_source(name), "Complete source")
+        replacement = self.library.lookup(name)
+        self.assertEqual((replacement.title, replacement.metadata["words"]), ("Replacement", 20))
+        self.assertGreater(replacement.mtime, original.mtime)
+
+    def test_upload_replaces_entry_with_long_supported_filename(self):
+        name = "a" * 241 + ".mp3"
+        self.assertTrue(self.library.upload(name, io.BytesIO(b"Previous")).created)
+        self.assertFalse(self.library.upload(name, io.BytesIO(b"Replacement")).created)
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"Replacement")
+
+    def test_failed_audio_publication_restores_sidecars_and_upload_can_retry(self):
+        name = "fixture.m4a"
+        path = self.legacy(name, audio=b"Before", title="Original", meta={"words": 100})
+        self.legacy("fixture.aac", audio=b"Same stem")
+        writer = Library(self.root, OWNER)
+        original = self.library.entries()
+        replace = Path.replace
+
+        def fail_audio(staged, destination):
+            if destination == path:
+                raise OSError("audio publication interrupted")
+            return replace(staged, destination)
+
+        def upload():
+            return writer.upload(name, io.BytesIO(b"After"), source=io.BytesIO(b"New source"),
+                                 metadata={"title": "Replacement", "words": 20})
+
+        with patch.object(Path, "replace", fail_audio):
+            with self.assertRaisesRegex(OSError, "audio publication interrupted"):
+                upload()
+
+        self.assertCountEqual(self.library.entries(), original)
+        self.assertIsNone(self.library.read_source(name))
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"Before")
+        self.assertFalse(upload().created)
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"After")
+        self.assertEqual(self.library.read_source("fixture.aac"), "New source")
+        self.assertEqual(self.library.lookup("fixture.aac").title, "Replacement")
+
+    def test_listing_waits_for_publication_in_same_owner_directory(self):
+        name = "fixture.aac"
+        path = self.legacy(name, audio=b"Before", title="Original", meta={"words": 100})
+        writer = Library(self.root / OWNER / "..", OWNER)
+        other = Library(self.root, "other@example.com")
+        publishing, release, listing = Event(), Event(), Event()
+        replace = Path.replace
+
+        def pause_audio(staged, destination):
+            if destination.resolve() == path:
+                publishing.set()
+                if not release.wait(5):
+                    raise TimeoutError("test did not release audio publication")
+            return replace(staged, destination)
+
+        def entries():
+            listing.set()
+            return self.library.entries()
+
+        with patch.object(Path, "replace", pause_audio), ThreadPoolExecutor(3) as pool:
+            uploaded = pool.submit(writer.upload, name, io.BytesIO(b"Longer audio"),
+                                   metadata={"title": "Replacement", "words": 20})
+            try:
+                self.assertTrue(publishing.wait(5))
+                listed = pool.submit(entries)
+                self.assertTrue(listing.wait(5))
+                self.assertEqual(pool.submit(other.entries).result(timeout=5), [])
+                with self.assertRaises(TimeoutError):
+                    listed.result(timeout=0.05)
+            finally:
+                release.set()
+            self.assertFalse(uploaded.result(timeout=5).created)
+            entry, = listed.result(timeout=5)
+
+        self.assertEqual((entry.name, entry.title, entry.metadata["words"], entry.size),
+                         (name, "Replacement", 20, 12))
 
     def test_history_includes_orphans_and_removal_keeps_shared_stem_behavior(self):
         self.legacy("shared.mp3", source="shared source", title="Shared display", meta={"words": 100})

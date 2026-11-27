@@ -1521,7 +1521,8 @@ def api_patch(name):
     title = ((request.get_json(silent=True) or {}).get("title") or "").strip()[:120]
     if not title:
         return _api_err(400, "validation", "title required")
-    Library(LIBRARY_DIR, g.api_user).set_title(name, title)
+    if not Library(LIBRARY_DIR, g.api_user).set_title(name, title):
+        return _api_err(404, "not-found", "no such entry")
     log(g.api_user, title, "api-rename", name)
     return jsonify({"name": name, "title": title})
 
