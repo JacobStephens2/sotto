@@ -43,7 +43,6 @@ class NarrationJobs:
         self._notify = notify
         self._jobs = {}
         self._registry_lock = Lock()
-        self._library_lock = Lock()
 
     def _path(self, job_id, suffix):
         return self._directory / (job_id + suffix)
@@ -204,9 +203,8 @@ class NarrationJobs:
                 return None
             if not record.get("saved"):
                 owner, title = record["owner"], record["title"]
-                with self._library_lock:
-                    name = Library(self._library_dir, owner).save_narration(
-                        audio, title=title, source=self._read_source(job), metadata=record, job_id=job.id)
+                name = Library(self._library_dir, owner).save_narration(
+                    audio, title=title, source=self._read_source(job), metadata=record, job_id=job.id)
                 record["saved"] = name
                 record.pop("error", None)
                 self._audit(owner, title, "saved", name)
