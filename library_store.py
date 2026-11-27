@@ -14,6 +14,8 @@ from weakref import WeakValueDictionary
 _OWNER_LOCKS = WeakValueDictionary()
 _OWNER_LOCKS_GUARD = Lock()
 _NARRATION_METADATA = ("secs", "words", "voice")
+_SIDECAR_SUFFIXES = (".md", ".title", ".meta")
+_SLUG_LIMIT = 60
 
 
 @dataclass(frozen=True)
@@ -50,7 +52,7 @@ def _publish(staged, audio):
     """Publish an entry under its owner lock, with the audio move as commit."""
     previous = []
     try:
-        for suffix in (".md", ".title", ".meta"):
+        for suffix in _SIDECAR_SUFFIXES:
             source = _sidecar(staged, suffix)
             if not source.is_file():
                 continue
@@ -59,7 +61,7 @@ def _publish(staged, audio):
                 raise IsADirectoryError(destination)
             backup = None
             if os.path.lexists(destination):
-                backup = source.with_suffix(suffix + ".previous")
+                backup = staged.parent / (suffix + ".previous")
                 destination.replace(backup)
             previous.append((destination, backup))
             source.replace(destination)
@@ -201,7 +203,8 @@ class Library:
             path = self.audio_file(name)
             if path is None:
                 return False
-            for target in (path, _sidecar(path, ".md"), _sidecar(path, ".title"), _sidecar(path, ".meta")):
+            targets = [path] + [_sidecar(path, suffix) for suffix in _SIDECAR_SUFFIXES]
+            for target in targets:
                 try:
                     target.unlink()
                 except OSError:
@@ -209,7 +212,7 @@ class Library:
             return True
 
     def save_narration(self, audio, *, title, source, metadata, job_id):
-        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:60] or "narration"
+        slug = re.sub(r"[^a-z0-9]+", "-", title.lower()).strip("-")[:_SLUG_LIMIT] or "narration"
         with TemporaryDirectory(dir=self._directory, ignore_cleanup_errors=True) as directory:
             staged = Path(directory) / (slug + ".mp3")
             shutil.copy2(audio, staged)
@@ -219,11 +222,13 @@ class Library:
             with self._lock:
                 path = self._directory / staged.name
                 if os.path.lexists(path):
-                    stem = f"{slug}-{job_id[:6]}"
-                    path = self._directory / (stem + ".mp3")
+                    job_suffix = "-" + job_id[:6]
+                    path = self._directory / f"{slug}{job_suffix}.mp3"
                     index = 2
                     while os.path.lexists(path):
-                        path = self._directory / f"{stem}-{index}.mp3"
+                        suffix = f"{job_suffix}-{index}"
+                        # Reserve room for the suffix so sync clients can open this candidate.
+                        path = self._directory / f"{slug[:_SLUG_LIMIT - len(suffix)]}{suffix}.mp3"
                         index += 1
                 _publish(staged, path)
         return path.name

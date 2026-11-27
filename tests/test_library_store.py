@@ -196,6 +196,12 @@ class LibraryStoreTests(unittest.TestCase):
         self.assertEqual((replacement.title, replacement.metadata["words"]), ("Replacement", 20))
         self.assertGreater(replacement.mtime, original.mtime)
 
+    def test_upload_replaces_entry_with_long_supported_filename(self):
+        name = "a" * 241 + ".mp3"
+        self.assertTrue(self.library.upload(name, io.BytesIO(b"Previous")).created)
+        self.assertFalse(self.library.upload(name, io.BytesIO(b"Replacement")).created)
+        self.assertEqual(self.library.audio_file(name).read_bytes(), b"Replacement")
+
     def test_failed_audio_publication_restores_sidecars_and_upload_can_retry(self):
         name = "fixture.m4a"
         path = self.legacy(name, audio=b"Before", title="Original", meta={"words": 100})

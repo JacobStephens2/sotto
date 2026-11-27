@@ -1522,7 +1522,7 @@ def api_patch(name):
     if not title:
         return _api_err(400, "validation", "title required")
     if not Library(LIBRARY_DIR, g.api_user).set_title(name, title):
-        abort(404)
+        return _api_err(404, "not-found", "no such entry")
     log(g.api_user, title, "api-rename", name)
     return jsonify({"name": name, "title": title})
 

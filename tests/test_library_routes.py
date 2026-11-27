@@ -338,9 +338,22 @@ class LibraryRoutesTests(unittest.TestCase):
 
         with patch.object(request_class, "get_json", delete_during_patch):
             response = self.client.patch(path, json={"title": "Too late"}, headers=self.auth)
-        self.assertEqual(response.status_code, 404)
+        self.assertEqual((response.status_code, response.json),
+                         (404, {"error": "not-found", "detail": "no such entry"}))
         self.assertEqual(self.entries(), [])
         self.assertEqual([event["status"] for event in self.audit()], ["api-upload", "api-delete"])
+
+    def test_numeric_collision_name_can_be_downloaded_by_sync_client(self):
+        title = "a" * 52
+        job_id = self.finished_job()
+        occupied = {f"{title}.mp3", f"{title}-{job_id[:6]}.mp3"}
+        for name in occupied:
+            self.assertEqual(self.upload(name).status_code, 201)
+        self.assertEqual(self.post(f"/job/{job_id}/rename", title=title).status_code, 302)
+        self.assertEqual(self.post(f"/job/{job_id}/save").location, "/library")
+        name, = {entry["name"] for entry in self.entries()} - occupied
+        with self.client.get(f"/api/v1/library/{name}/audio", headers=self.auth) as response:
+            self.assertEqual((response.status_code, response.data), (200, AUDIO))
 
     def test_repeated_manual_save_keeps_marker_and_persistence(self):
         job_id = self.finished_job()
